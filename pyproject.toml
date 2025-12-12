@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "loguru>=0.7.3",
+    "nnunetv2",
     "numpy<2",
     "opencv-python>=4.6.0.66",
     "openpyxl>=3.1.5",
@@ -33,3 +34,6 @@ dependencies = [
 dev = [
     "pandas-stubs>=2.3.3.251201",
 ]
+
+[tool.uv.sources]
+nnunetv2 = { git = "https://github.com/MIC-DKFZ/nnUNet" }
