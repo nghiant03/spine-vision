@@ -1,8 +1,9 @@
 import logging
 import re
+import warnings
 import shutil
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -12,8 +13,9 @@ from loguru import logger
 from openpyxl.reader.excel import SUPPORTED_FORMATS
 from paddleocr import TextDetection
 from PIL import Image
-from rapidfuzz import fuzz 
+from rapidfuzz import fuzz
 from tqdm.rich import tqdm
+from tqdm.std import TqdmExperimentalWarning
 from unidecode import unidecode
 from vietocr.tool.config import Cfg
 from vietocr.tool.predictor import Predictor
@@ -171,8 +173,9 @@ def find_matching_folder(patient_name: str, patient_birthday: str, folder_map: d
     return None
 
 def main(config: PreprocessConfig):
-    log_level = logging.DEBUG if config.verbose else logging.INFO
+    warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
 
+    log_level = logging.DEBUG if config.verbose else logging.INFO
     logger.remove()
     logger.add(
         lambda msg: tqdm.write(msg, end=""),

@@ -1,16 +1,16 @@
 from pathlib import Path
+from typing import Annotated
 
 import tyro
 from pydantic import BaseModel, computed_field
-from typing import Annotated
 
 
 class PreprocessConfig(BaseModel):
-    data_path: Path = Path.cwd() / "data/silver/"
+    data_path: Path = Path.cwd() / "data/silver/Phenikaa"
     exclude_files: list[str] = []
     id_col: str = "Patient ID"
     corrupted_ids: list[int] = [25001, 250027783, 250026093, 250026925, 250026665, 250010269]
-    output_path: Path = Path("data/gold")
+    output_path: Path = Path.cwd() / "data/gold/classification"
     output_table: str = "radiological_labels.csv"
     model_path: Path = Path.cwd() / "weights/ocr"
     detection_model: str = "PP-OCRv5_server_det"
@@ -57,3 +57,32 @@ class PreprocessConfig(BaseModel):
     @property
     def detection_model_path(self) -> Path:
         return self.model_path / self.detection_model
+
+
+class ConvertConfig(BaseModel):
+    input_path: Path = Path.cwd() / "data/silver/SPIDER"
+    output_path: Path = Path.cwd() / "data/gold/segmentation/Dataset501_Spider"
+    dataset_name: str = "Spider"
+    channel_name: str = "MRI"
+    file_extension: str = ".mha"
+    verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
+
+    @computed_field
+    @property
+    def input_images_path(self) -> Path:
+        return self.input_path / "images"
+
+    @computed_field
+    @property
+    def input_masks_path(self) -> Path:
+        return self.input_path / "masks"
+
+    @computed_field
+    @property
+    def output_images_path(self) -> Path:
+        return self.output_path / "imagesTr"
+
+    @computed_field
+    @property
+    def output_labels_path(self) -> Path:
+        return self.output_path / "labelsTr"
