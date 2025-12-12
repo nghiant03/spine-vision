@@ -1,0 +1,35 @@
+[project]
+name = "spine-vision"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "loguru>=0.7.3",
+    "numpy<2",
+    "opencv-python>=4.6.0.66",
+    "openpyxl>=3.1.5",
+    "paddleocr==3.3.2",
+    "paddlepaddle==3.2.1",
+    "paddlepaddle-gpu>=2.6.2",
+    "pandas>=2.3.3",
+    "pillow>=10.2.0",
+    "pydantic>=2.12.5",
+    "pyyaml>=6.0.0",
+    "rapidfuzz>=3.14.3",
+    "rich>=14.2.0",
+    "setuptools>=80.9.0",
+    "simpleitk>=2.5.3",
+    "torch>=2.9.1",
+    "torchvision>=0.24.1",
+    "tqdm>=4.67.1",
+    "tyro>=0.9.35",
+    "unidecode>=1.4.0",
+    "vietocr>=0.3.13",
+    "xlrd>=2.0.2",
+]
+
+[dependency-groups]
+dev = [
+    "pandas-stubs>=2.3.3.251201",
+]
