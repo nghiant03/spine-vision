@@ -18,13 +18,12 @@ LABEL_MAPPING: dict[int, int] = {
     **{201 + i: 27 + i for i in range(25)},
 }
 
-LABEL_NAMES: dict[str, str] = {
-    "0": "background",
-    **{str(i): f"Vertebra_{i}" for i in range(1, 26)},
-    "26": "Spinal_Canal",
-    **{str(27 + i): f"Disc_{201 + i}" for i in range(25)},
+LABEL_NAMES: dict[str, int] = {
+    "background": 0,
+    **{f"Vertebra_{i}": i for i in range(1, 26)},
+    "Spinal_Canal": 26,
+    **{f"Disc_{201 + i}": 27 + i for i in range(25)},
 }
-
 
 def remap_labels(mask_array: np.ndarray, mapping: dict[int, int]) -> np.ndarray:
     remapped = np.zeros_like(mask_array)
@@ -63,7 +62,7 @@ def generate_dataset_json(
     output_path: Path,
     num_training: int,
     channel_name: str,
-    label_names: dict[str, str],
+    label_names: dict[str, int],
 ) -> None:
     dataset_json = {
         "channel_names": {"0": channel_name},
