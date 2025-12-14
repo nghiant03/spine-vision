@@ -7,6 +7,7 @@ Medical imaging data processing pipeline for spine analysis. The project handles
 - Fuzzy matching of patient data across different data sources
 - DICOM/MHA to NIfTI format conversion for nnUNet training
 - Tabular data preprocessing from Excel/CSV files
+- Interactive visualization of segmentation results with nnUNet inference
 
 ## Tech Stack
 
@@ -22,6 +23,7 @@ Medical imaging data processing pipeline for spine analysis. The project handles
   - `tyro` - CLI argument parsing
   - `loguru` - Logging
   - `torch` / `torchvision` - Deep learning backend (GPU support)
+  - `plotly` - Interactive visualization for segmentation results
 
 ## Commands
 
@@ -38,6 +40,9 @@ uv run python preprocess.py [OPTIONS]
 
 # Convert SPIDER dataset to nnUNet format
 uv run python convert.py [OPTIONS]
+
+# Visualize segmentation with nnUNet inference
+uv run python visualize.py [OPTIONS]
 ```
 
 ### Preprocess CLI Options
@@ -62,30 +67,46 @@ uv run python convert.py [OPTIONS]
 | `--file-extension` | Input file extension | `.mha` |
 | `-v, --verbose` | Debug logging | `False` |
 
+### Visualize CLI Options
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--input-path` | DICOM input directory | `data/raw/dicom` |
+| `--output-path` | Inference output directory | `data/inference` |
+| `--model-path` | nnUNet model weights | `weights/nnunet` |
+| `--dataset-id` | nnUNet dataset ID | `501` |
+| `--configuration` | nnUNet configuration | `3d_fullres` |
+| `--fold` | Model fold to use | `0` |
+| `--save-probabilities` | Save prediction probabilities | `True` |
+| `-v, --verbose` | Debug logging | `False` |
+
 ## Project Structure
 
 ```
 spine-vision/
-├── config.py          # PreprocessConfig with computed paths
+├── config.py          # Pydantic configs (PreprocessConfig, ConvertConfig, VisualizeConfig)
 ├── preprocess.py      # Main OCR + fuzzy matching pipeline
-├── convert.py         # SPIDER → nnUNet converter (ConvertConfig + CLI)
+├── convert.py         # SPIDER → nnUNet converter
+├── visualize.py       # Interactive segmentation visualization with nnUNet inference
 ├── data/              # (gitignored) Input/output data
-│   ├── silver/        # Raw input data
+│   ├── raw/           # Raw input data (DICOM, SPIDER)
+│   ├── silver/        # Intermediate processed data
 │   │   ├── images/    # Patient image folders
 │   │   └── labels/
 │   │       ├── reports/  # Medical report PNGs
 │   │       └── tables/   # Excel/CSV label files
-│   └── gold/          # Processed output
-│       ├── images/    # Matched patient images
-│       └── radiological_labels.csv
-└── weights/           # (gitignored) OCR model weights
-    └── ocr/
+│   ├── gold/          # Final processed output
+│   │   ├── images/    # Matched patient images
+│   │   └── radiological_labels.csv
+│   └── inference/     # nnUNet inference output
+└── weights/           # (gitignored) Model weights
+    ├── ocr/           # VietOCR weights
+    └── nnunet/        # nnUNet trained models
 ```
 
 ## Code Patterns
 
 ### Configuration
-Both `preprocess.py` and `convert.py` use Pydantic `BaseModel` with `computed_field` for derived paths:
+All scripts use Pydantic `BaseModel` with `computed_field` for derived paths:
 ```python
 class PreprocessConfig(BaseModel):
     data_path: Path = Path.cwd() / "data/silver/"
@@ -106,7 +127,7 @@ class ConvertConfig(BaseModel):
 
 CLI arguments parsed with `tyro`:
 ```python
-config = tyro.cli(PreprocessConfig)  # or ConvertConfig
+config = tyro.cli(PreprocessConfig)  # or ConvertConfig, VisualizeConfig
 ```
 
 ### Logging
@@ -169,5 +190,5 @@ No test suite currently configured. When adding tests:
 
 Dev dependencies include `pandas-stubs` for pandas type hints. Run type checking with:
 ```bash
-uv run pyright preprocess.py config.py
+uv run pyright preprocess.py convert.py visualize.py config.py
 ```

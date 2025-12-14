@@ -86,3 +86,24 @@ class ConvertConfig(BaseModel):
     @property
     def output_labels_path(self) -> Path:
         return self.output_path / "labelsTr"
+
+
+class VisualizeConfig(BaseModel):
+    input_path: Path = Path.cwd() / "data/raw/dicom"
+    output_path: Path = Path.cwd() / "data/inference"
+    model_path: Path = Path.cwd() / "weights/nnunet"
+    dataset_id: int = 501
+    configuration: str = "3d_fullres"
+    fold: int = 0
+    save_probabilities: bool = True
+    verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
+
+    @computed_field
+    @property
+    def temp_input_path(self) -> Path:
+        return self.output_path / "temp_input"
+
+    @computed_field
+    @property
+    def temp_output_path(self) -> Path:
+        return self.output_path / "temp_prediction"
