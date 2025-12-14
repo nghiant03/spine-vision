@@ -52,7 +52,7 @@ def convert_image(
     remapped_array = remap_labels(mask_array, LABEL_MAPPING)
 
     remapped_mask = sitk.GetImageFromArray(remapped_array)
-    remapped_mask.CopyInformation(mask)
+    remapped_mask.CopyInformation(image)
 
     sitk.WriteImage(remapped_mask, str(output_labels / f"{case_id}.nii.gz"))
     return True
