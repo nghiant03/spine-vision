@@ -60,8 +60,8 @@ class PreprocessConfig(BaseModel):
 
 
 class ConvertConfig(BaseModel):
-    input_path: Path = Path.cwd() / "data/silver/SPIDER"
-    output_path: Path = Path.cwd() / "data/gold/segmentation/Dataset501_Spider"
+    input_path: Path = Path.cwd() / "data/raw/SPIDER"
+    output_path: Path = Path.cwd() / "data/silver/SPIDER/Dataset501_Spider"
     dataset_name: str = "Spider"
     channel_name: str = "MRI"
     file_extension: str = ".mha"
