@@ -4,6 +4,7 @@ Usage:
     spine-vision dataset nnunet [OPTIONS]      # Convert to nnUNet format
     spine-vision dataset ivd-coords [OPTIONS]  # Create IVD coordinates dataset
     spine-vision dataset phenikaa [OPTIONS]    # Preprocess Phenikaa dataset
+    spine-vision train localization [OPTIONS]  # Train localization model
     spine-vision visualize [OPTIONS]           # Visualize segmentation results
 """
 
@@ -16,6 +17,8 @@ from spine_vision.datasets.nnunet import ConvertConfig, main as nnunet_main
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig, main as ivd_coords_main
 from spine_vision.datasets.phenikaa import PreprocessConfig, main as phenikaa_main
 from spine_vision.cli.visualize import VisualizeConfig, main as visualize_main
+from spine_vision.cli.train import main as train_main
+from spine_vision.training.trainers.localization import LocalizationConfig
 
 
 DatasetSubcommand = Annotated[
@@ -37,6 +40,17 @@ DatasetSubcommand = Annotated[
 ]
 
 
+TrainSubcommand = Annotated[
+    Union[
+        Annotated[
+            LocalizationConfig,
+            tyro.conf.subcommand("localization", prefix_name=False, description="Train localization model (ConvNext)"),
+        ],
+    ],
+    tyro.conf.arg(name=""),
+]
+
+
 @dataclasses.dataclass
 class DatasetCommand:
     """Dataset creation and conversion commands."""
@@ -44,10 +58,21 @@ class DatasetCommand:
     cmd: DatasetSubcommand
 
 
+@dataclasses.dataclass
+class TrainCommand:
+    """Model training commands."""
+
+    cmd: TrainSubcommand
+
+
 Command = Union[
     Annotated[
         DatasetCommand,
         tyro.conf.subcommand("dataset", description="Dataset creation and conversion"),
+    ],
+    Annotated[
+        TrainCommand,
+        tyro.conf.subcommand("train", description="Model training"),
     ],
     Annotated[
         VisualizeConfig,
@@ -69,8 +94,16 @@ def cli() -> None:
                     ivd_coords_main(cmd)
                 case PreprocessConfig():
                     phenikaa_main(cmd)
+        case TrainCommand(cmd=cmd):
+            match cmd:
+                case LocalizationConfig():
+                    train_main(cmd)
         case VisualizeConfig():
             visualize_main(config)
+
+
+if __name__ == "__main__":
+    cli()
 
 
 if __name__ == "__main__":

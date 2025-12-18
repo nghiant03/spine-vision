@@ -42,6 +42,7 @@ uv sync --group dev        # Include dev dependencies (pandas-stubs, plotly-stub
 spine-vision dataset nnunet [OPTIONS]     # Convert datasets to nnU-Net format
 spine-vision dataset ivd-coords [OPTIONS] # Create IVD coordinates dataset
 spine-vision dataset phenikaa [OPTIONS]   # Preprocess Phenikaa dataset (OCR + matching)
+spine-vision train localization [OPTIONS] # Train localization model (ConvNext)
 spine-vision visualize [OPTIONS]          # Visualize segmentation with inference
 ```
 
@@ -101,9 +102,24 @@ spine-vision/
 │   ├── visualization/         # Visualization
 │   │   ├── __init__.py
 │   │   └── plotly_viewer.py   # Interactive batch-capable viewer
+│   ├── training/              # Training infrastructure
+│   │   ├── __init__.py
+│   │   ├── base.py            # BaseTrainer, BaseModel, TrainingConfig
+│   │   ├── metrics.py         # LocalizationMetrics, ClassificationMetrics
+│   │   ├── visualization.py   # TrainingVisualizer for curves/predictions
+│   │   ├── datasets/          # PyTorch datasets for training
+│   │   │   ├── __init__.py
+│   │   │   └── ivd_coords.py  # IVDCoordsDataset
+│   │   ├── models/            # Model architectures
+│   │   │   ├── __init__.py
+│   │   │   └── convnext.py    # ConvNextLocalization, ConvNextClassifier
+│   │   └── trainers/          # Task-specific trainers
+│   │       ├── __init__.py
+│   │       └── localization.py # LocalizationTrainer, LocalizationConfig
 │   └── cli/                   # Unified CLI with subcommands
-│       ├── __init__.py        # Main entry point (nnunet, ivd-coords, phenikaa, visualize)
-│       └── visualize.py       # Visualization command config and logic
+│       ├── __init__.py        # Main entry point (dataset, train, visualize)
+│       ├── visualize.py       # Visualization command config and logic
+│       └── train.py           # Training command entry point
 ├── configs/                   # YAML config files (optional)
 ├── data/                      # (gitignored) Data directories
 ├── weights/                   # (gitignored) Model weights
@@ -224,6 +240,55 @@ viewer.visualize(image, mask, title="Segmentation")
 viewer.visualize_batch(images, masks)  # Batch processing
 ```
 
+### Training (`spine_vision.training`)
+```python
+from spine_vision.training import (
+    # Base classes
+    BaseModel, BaseTrainer, TrainingConfig, TrainingResult,
+    # Dataset
+    IVDCoordsDataset,
+    # Models
+    ConvNextLocalization,
+    # Trainers
+    LocalizationConfig, LocalizationTrainer,
+    # Metrics & Visualization
+    LocalizationMetrics, TrainingVisualizer,
+)
+
+# Training localization model
+config = LocalizationConfig(
+    data_path=Path("data/gold/ivd_coords"),
+    output_path=Path("outputs/localization"),
+    model_variant="base",  # tiny, small, base, large
+    batch_size=32,
+    num_epochs=100,
+    learning_rate=1e-4,
+)
+trainer = LocalizationTrainer(config)
+result = trainer.train()
+
+# Evaluate on test set
+test_metrics = trainer.evaluate()
+
+# Create custom dataset
+dataset = IVDCoordsDataset(
+    data_path=Path("data/gold/ivd_coords"),
+    split="train",
+    series_types=["sag_t1", "sag_t2"],
+    image_size=(224, 224),
+    augment=True,
+)
+
+# Metrics computation
+metrics = LocalizationMetrics(pck_thresholds=[0.02, 0.05, 0.10])
+result = metrics.compute(predictions, targets, levels)
+
+# Training visualization
+visualizer = TrainingVisualizer(output_path=Path("vis/"), output_mode="html")
+visualizer.plot_training_curves(history)
+visualizer.plot_error_distribution(predictions, targets, levels)
+```
+
 ## CLI Options
 
 ### spine-vision dataset phenikaa
@@ -268,6 +333,29 @@ viewer.visualize_batch(images, masks)  # Batch processing
 | `--fold` | Model fold | `0` |
 | `--output-mode` | Output format (`browser`, `html`, `image`) | `html` |
 | `--batch` | Enable batch processing | `False` |
+| `-v, --verbose` | Debug logging | `False` |
+
+### spine-vision train localization
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--data-path` | IVD coordinates dataset path | `data/gold/ivd_coords` |
+| `--output-path` | Training output directory | `outputs/training` |
+| `--model-variant` | ConvNext variant (`tiny`, `small`, `base`, `large`) | `base` |
+| `--batch-size` | Training batch size | `32` |
+| `--num-epochs` | Number of training epochs | `100` |
+| `--learning-rate` | Learning rate | `1e-4` |
+| `--scheduler-type` | LR scheduler (`cosine`, `step`, `plateau`, `none`) | `cosine` |
+| `--freeze-backbone-epochs` | Epochs to freeze backbone | `0` |
+| `--loss-type` | Loss function (`mse`, `smooth_l1`, `huber`) | `smooth_l1` |
+| `--use-level-embedding` | Use IVD level embedding | `True` |
+| `--series-types` | Filter series types (e.g., `sag_t1 sag_t2`) | None |
+| `--levels` | Filter IVD levels (e.g., `L4/L5 L5/S1`) | None |
+| `--image-size` | Target image size (H W) | `224 224` |
+| `--augment` | Enable data augmentation | `True` |
+| `--mixed-precision` | Use mixed precision training | `True` |
+| `--early-stopping` | Enable early stopping | `True` |
+| `--patience` | Early stopping patience | `20` |
+| `--visualize-predictions` | Generate prediction visualizations | `True` |
 | `-v, --verbose` | Debug logging | `False` |
 
 ## Adding New Components
@@ -329,6 +417,49 @@ Command = Union[
     Annotated[MyDatasetConfig, tyro.conf.subcommand("my-dataset", description="...")],
 ]
 ```
+
+### New Training Model
+Create a new model in `spine_vision/training/models/`:
+```python
+# spine_vision/training/models/my_model.py
+from spine_vision.training.base import BaseModel
+
+class MyModel(BaseModel):
+    def __init__(self, num_classes: int = 4) -> None:
+        super().__init__()
+        self.backbone = ...
+        self.head = ...
+    
+    @property
+    def name(self) -> str:
+        return "MyModel"
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.head(self.backbone(x))
+    
+    def get_loss(self, predictions: torch.Tensor, targets: torch.Tensor, **kwargs) -> torch.Tensor:
+        return F.cross_entropy(predictions, targets)
+```
+
+### New Training Task
+Create a new trainer in `spine_vision/training/trainers/`:
+```python
+# spine_vision/training/trainers/my_task.py
+from spine_vision.training.base import BaseTrainer, TrainingConfig
+
+class MyTaskConfig(TrainingConfig):
+    """Configuration for my task."""
+    my_param: int = 10
+
+class MyTaskTrainer(BaseTrainer[MyTaskConfig, MyModel, MyDataset]):
+    def _unpack_batch(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
+        return batch["input"], batch["target"]
+    
+    def _compute_metrics(self, predictions, targets) -> dict[str, float]:
+        return {"accuracy": compute_accuracy(predictions, targets)}
+```
+
+Then register in `spine_vision/cli/__init__.py` under `TrainSubcommand`.
 
 ## Gotchas
 
