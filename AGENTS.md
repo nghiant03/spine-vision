@@ -70,8 +70,8 @@ uv run python visualize.py [OPTIONS]
 ### Visualize CLI Options
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--input-path` | DICOM input directory | `data/raw/dicom` |
-| `--output-path` | Inference output directory | `data/inference` |
+| `--input-path` | DICOM input directory | `data/gold/classification/images` |
+| `--output-path` | Inference output directory | `results/segmentation` |
 | `--model-path` | nnUNet model weights | `weights/nnunet` |
 | `--dataset-id` | nnUNet dataset ID | `501` |
 | `--configuration` | nnUNet configuration | `3d_fullres` |

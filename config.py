@@ -89,14 +89,16 @@ class ConvertConfig(BaseModel):
 
 
 class VisualizeConfig(BaseModel):
-    input_path: Path = Path.cwd() / "data/raw/dicom"
-    output_path: Path = Path.cwd() / "data/inference"
-    model_path: Path = Path.cwd() / "weights/nnunet"
+    input_path: Path = Path.cwd() / "data/gold/classification/images/250029976/SAG T1"
+    output_path: Path = Path.cwd() / "results/segmentation"
+    model_path: Path = Path.cwd() / "weights/segmentation/Dataset501_Spider/nnUNetTrainer__nnUNetPlans__2d"
     dataset_id: int = 501
-    configuration: str = "3d_fullres"
+    configuration: str = "2d"
     fold: int = 0
-    save_probabilities: bool = True
+    save_probabilities: bool = False
+    enable_tta: bool = False
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
+    output_mode: str = "html"
 
     @computed_field
     @property

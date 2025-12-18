@@ -40,6 +40,9 @@ def run_nnunet_prediction(config: VisualizeConfig) -> None:
     if config.save_probabilities:
         cmd.append("--save_probabilities")
 
+    if not config.enable_tta:
+        cmd.append("--disable_tta")
+
     subprocess.check_call(cmd)
 
 
@@ -157,7 +160,26 @@ def main(config: VisualizeConfig) -> None:
     pred_sitk = sitk.ReadImage(str(prediction_path))
 
     fig = create_visualization(image_sitk, pred_sitk)
-    fig.show()
+    if config.output_mode == "browser":
+        fig.show()
+    elif config.output_mode == "html":
+        html_path = config.output_path / "visualization.html"
+        fig.write_html(html_path)
+        logger.info(f"Saved HTML visualization to {html_path}")
+    elif config.output_mode == "image":
+        img_path = config.output_path / "visualization.png"
+        try:
+            fig.write_image(img_path)
+            logger.info(f"Saved image visualization to {img_path}")
+        except Exception as e:
+            logger.error(f"Failed to save image visualization: {e}")
+            logger.warning("Falling back to HTML output due to image export failure")
+            html_path = config.output_path / "visualization.html"
+            fig.write_html(html_path)
+            logger.info(f"Saved HTML visualization to {html_path}")
+    else:
+        logger.warning(f"Unknown output_mode {config.output_mode}, defaulting to browser")
+        fig.show()
 
     logger.info("Visualization complete")
 
