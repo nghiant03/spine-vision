@@ -184,7 +184,7 @@ class LocalizationTrainer(
         self.optimizer.zero_grad()
 
         if self.scaler:
-            with torch.cuda.amp.autocast():  # type: ignore[attr-defined]
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                 predictions = self.model(inputs, level_idx)
                 loss = self.model.get_loss(predictions, targets)
 
@@ -234,7 +234,7 @@ class LocalizationTrainer(
                 )
 
                 if self.scaler:
-                    with torch.cuda.amp.autocast():  # type: ignore[attr-defined]
+                    with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                         predictions = self.model(inputs, level_idx)
                         loss = self.model.get_loss(predictions, targets)
                 else:

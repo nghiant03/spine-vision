@@ -217,7 +217,7 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
 
         # Mixed precision
         self.scaler = (
-            torch.cuda.amp.GradScaler()  # type: ignore[attr-defined]
+            torch.amp.GradScaler("cuda")  # type: ignore[attr-defined]
             if config.mixed_precision and self.device.type == "cuda"
             else None
         )
@@ -432,7 +432,7 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         self.optimizer.zero_grad()
 
         if self.scaler:
-            with torch.cuda.amp.autocast():  # type: ignore[attr-defined]
+            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                 predictions = self.model(inputs)
                 loss = self.model.get_loss(predictions, targets)  # type: ignore[union-attr]
 
@@ -475,7 +475,7 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
                 targets = targets.to(self.device)
 
                 if self.scaler:
-                    with torch.cuda.amp.autocast():  # type: ignore[attr-defined]
+                    with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
                         predictions = self.model(inputs)
                         loss = self.model.get_loss(predictions, targets)  # type: ignore[union-attr]
                 else:
