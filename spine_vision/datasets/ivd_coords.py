@@ -86,7 +86,7 @@ def process_lumbar_coords_pretrain(
 ) -> list[AnnotationRecord]:
     """Process Lumbar Coords pretrain data (spider, lsd, osf, tseg).
 
-    All sources contain sagittal T2-like images with IVD center point annotations.
+    Sources contain different modalities: Spider/LSD (T2), OSF (T1), Tseg (CT).
 
     Args:
         coords_csv_path: Path to coords_pretrain.csv.
@@ -111,6 +111,12 @@ def process_lumbar_coords_pretrain(
         "osf": "processed_osf",
         "tseg": "processed_tseg",
     }
+    source_to_series_type = {
+        "spider": "sag_t2",
+        "lsd": "sag_t2",
+        "osf": "sag_t1",
+        "tseg": "ct",
+    }
 
     processed_files: set[str] = set()
 
@@ -128,7 +134,7 @@ def process_lumbar_coords_pretrain(
                 logger.warning(f"Unknown source: {source}")
                 continue
 
-            series_type = "sag_t2"
+            series_type = source_to_series_type[source]
             output_filename = f"pretrain_{source}_{filename}"
             if not output_filename.endswith((".jpg", ".png")):
                 output_filename = output_filename.replace(".npy", ".png")
