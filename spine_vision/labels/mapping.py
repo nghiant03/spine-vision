@@ -100,9 +100,12 @@ def load_label_schema(schema_path: Path | str) -> LabelSchema:
     schema_path = Path(schema_path)
 
     if not schema_path.exists():
-        builtin_path = Path(__file__).parent / "schemas" / f"{schema_path.stem}.yaml"
-        if builtin_path.exists():
-            schema_path = builtin_path
+        # Check datasets/schemas for built-in schemas
+        datasets_schema_path = (
+            Path(__file__).parent.parent / "datasets" / "schemas" / f"{schema_path.stem}.yaml"
+        )
+        if datasets_schema_path.exists():
+            schema_path = datasets_schema_path
         else:
             raise FileNotFoundError(f"Schema not found: {schema_path}")
 
@@ -145,42 +148,4 @@ def generate_nnunet_labels(schema: LabelSchema) -> dict[str, int]:
     return {"background": 0, **schema.target_labels}
 
 
-def create_spider_schema() -> LabelSchema:
-    """Create the SPIDER dataset label schema programmatically.
 
-    Returns:
-        LabelSchema for SPIDER dataset.
-    """
-    source_labels = {
-        "background": 0,
-        **{f"Vertebra_{i}": i for i in range(1, 26)},
-        "Spinal_Canal": 100,
-        **{f"Disc_{201 + i}": 201 + i for i in range(25)},
-    }
-
-    target_labels = {
-        "background": 0,
-        **{f"Vertebra_{i}": i for i in range(1, 26)},
-        "Spinal_Canal": 26,
-        **{f"Disc_{201 + i}": 27 + i for i in range(25)},
-    }
-
-    mapping = {
-        0: 0,
-        **{i: i for i in range(1, 26)},
-        100: 26,
-        **{201 + i: 27 + i for i in range(25)},
-    }
-
-    return LabelSchema(
-        name="SPIDER",
-        source_labels=source_labels,
-        target_labels=target_labels,
-        mapping=mapping,
-        metadata={
-            "description": "SPIDER lumbar spine MRI dataset",
-            "num_vertebrae": 25,
-            "num_discs": 25,
-            "has_spinal_canal": True,
-        },
-    )

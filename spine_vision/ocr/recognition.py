@@ -1,6 +1,5 @@
 """Text recognition using VietOCR."""
 
-from pathlib import Path
 
 import numpy as np
 from loguru import logger

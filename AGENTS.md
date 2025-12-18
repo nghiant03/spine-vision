@@ -71,8 +71,7 @@ spine-vision/
 │   │   ├── readers.py         # DICOM, NIfTI, MHA, NRRD readers
 │   │   ├── writers.py         # Format conversion & export
 │   │   ├── tabular.py         # Excel/CSV handling
-│   │   ├── transforms.py      # Image normalization utilities
-│   │   └── rsna.py            # RSNA dataset utilities
+│   │   └── transforms.py      # Image normalization utilities
 │   ├── ocr/                   # OCR module
 │   │   ├── __init__.py
 │   │   ├── detection.py       # Text detection (PaddleOCR)
@@ -88,16 +87,17 @@ spine-vision/
 │   │   ├── segmentation.py    # nnUNet + other segmentation
 │   │   ├── localization.py    # Bounding box / landmark detection
 │   │   └── cropping.py        # ROI extraction
-│   ├── labels/                # Label management
+│   ├── labels/                # Label management (generic utilities)
 │   │   ├── __init__.py
-│   │   ├── mapping.py         # Label remapping utilities
-│   │   └── schemas/           # YAML label definitions
-│   │       └── spider.yaml    # SPIDER dataset labels
-│   ├── datasets/              # Dataset creation pipelines
+│   │   └── mapping.py         # LabelSchema class, remap_labels, load_label_schema
+│   ├── datasets/              # Dataset creation pipelines + dataset-specific info
 │   │   ├── __init__.py
 │   │   ├── nnunet.py          # nnUNet format conversion
 │   │   ├── ivd_coords.py      # IVD coordinates dataset creation
-│   │   └── phenikaa.py        # Phenikaa preprocessing (OCR + matching)
+│   │   ├── phenikaa.py        # Phenikaa preprocessing (OCR + matching)
+│   │   ├── rsna.py            # RSNA dataset utilities (series mapping)
+│   │   └── schemas/           # YAML label definitions
+│   │       └── spider.yaml    # SPIDER dataset labels
 │   ├── visualization/         # Visualization
 │   │   ├── __init__.py
 │   │   └── plotly_viewer.py   # Interactive batch-capable viewer
@@ -127,7 +127,7 @@ setup_logger(verbose=True, enable_file_log=True, log_path=Path("logs"))
 ```python
 from spine_vision.io import (
     read_medical_image, write_medical_image, load_tabular_data,
-    normalize_to_uint8, load_series_mapping, get_series_type, write_records_csv
+    normalize_to_uint8, write_records_csv
 )
 
 # Auto-detect format (DICOM dir, NIfTI, MHA, NRRD)
@@ -140,10 +140,6 @@ df = load_tabular_data(
     one_hot_col="Modic",
     corrupted_ids=[25001],
 )
-
-# RSNA series mapping
-series_mapping = load_series_mapping(Path("train_series_descriptions.csv"))
-series_type = get_series_type(series_id=67890, study_id=12345, series_mapping=series_mapping)
 
 # Normalize array to uint8
 arr_uint8 = normalize_to_uint8(float_array)
@@ -200,6 +196,7 @@ remapped = remap_labels(mask_array, schema.mapping)
 from spine_vision.datasets.nnunet import ConvertConfig, main as convert_main
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig, main as ivd_main
 from spine_vision.datasets.phenikaa import PreprocessConfig, main as preprocess_main
+from spine_vision.datasets import load_series_mapping, get_series_type
 
 # nnUNet conversion
 config = ConvertConfig(input_path=Path("data/raw/SPIDER"))
@@ -212,6 +209,10 @@ ivd_main(config)
 # Phenikaa preprocessing
 config = PreprocessConfig(data_path=Path("data/silver/Phenikaa"))
 preprocess_main(config)
+
+# RSNA series mapping
+series_mapping = load_series_mapping(Path("train_series_descriptions.csv"))
+series_type = get_series_type(series_id=67890, study_id=12345, series_mapping=series_mapping)
 ```
 
 ### Visualization (`spine_vision.visualization`)

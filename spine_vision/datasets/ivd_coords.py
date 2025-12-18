@@ -24,12 +24,8 @@ from tqdm.rich import tqdm
 from tqdm.std import TqdmExperimentalWarning
 
 from spine_vision.core.logging import setup_logger
-from spine_vision.io import (
-    get_series_type,
-    load_series_mapping,
-    normalize_to_uint8,
-    write_records_csv,
-)
+from spine_vision.datasets.rsna import get_series_type, load_series_mapping
+from spine_vision.io import normalize_to_uint8, write_records_csv
 
 
 class IVDDatasetConfig(BaseModel):
