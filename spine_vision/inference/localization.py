@@ -30,18 +30,14 @@ class BoundingBox:
     def center(self) -> tuple[float, float, float]:
         """Get center point of bounding box."""
         result = tuple(
-            (mn + mx) / 2
-            for mn, mx in zip(self.min_coords, self.max_coords)
+            (mn + mx) / 2 for mn, mx in zip(self.min_coords, self.max_coords)
         )
         return (result[0], result[1], result[2])
 
     @property
     def size(self) -> tuple[float, float, float]:
         """Get size (width, height, depth) of bounding box."""
-        result = tuple(
-            mx - mn
-            for mn, mx in zip(self.min_coords, self.max_coords)
-        )
+        result = tuple(mx - mn for mn, mx in zip(self.min_coords, self.max_coords))
         return (result[0], result[1], result[2])
 
 
@@ -160,17 +156,15 @@ def boxes_from_segmentation(
         min_idx = np.array([c.min() for c in coords])
         max_idx = np.array([c.max() for c in coords])
 
-        min_coords = tuple(
-            origin[i] + min_idx[2 - i] * spacing[i] for i in range(3)
-        )
-        max_coords = tuple(
-            origin[i] + max_idx[2 - i] * spacing[i] for i in range(3)
-        )
+        min_coords = tuple(origin[i] + min_idx[2 - i] * spacing[i] for i in range(3))
+        max_coords = tuple(origin[i] + max_idx[2 - i] * spacing[i] for i in range(3))
 
-        boxes.append(BoundingBox(
-            min_coords=min_coords,
-            max_coords=max_coords,
-            label=label,
-        ))
+        boxes.append(
+            BoundingBox(
+                min_coords=min_coords,
+                max_coords=max_coords,
+                label=label,
+            )
+        )
 
     return boxes

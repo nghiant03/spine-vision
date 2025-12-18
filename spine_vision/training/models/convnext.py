@@ -63,7 +63,9 @@ class ConvNextLocalization(BaseModel):
 
         # Load pretrained ConvNext
         if variant not in self.VARIANTS:
-            raise ValueError(f"Unknown variant: {variant}. Choose from {list(self.VARIANTS.keys())}")
+            raise ValueError(
+                f"Unknown variant: {variant}. Choose from {list(self.VARIANTS.keys())}"
+            )
 
         model_fn, weights = self.VARIANTS[variant]
         self.backbone: nn.Module = model_fn(weights=weights if pretrained else None)

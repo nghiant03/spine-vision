@@ -17,7 +17,6 @@ from spine_vision.matching.fuzzy import fuzzy_value_extract
 from spine_vision.matching.patient import PatientMatcher
 from spine_vision.ocr.extraction import DocumentExtractor
 
-
 NAME_FIELD_PATTERN = "Ho ten nguoi benh"
 BIRTHDAY_FIELD_PATTERN = "Ngay sinh"
 ONE_HOT_COL = "Modic"
@@ -29,7 +28,14 @@ class PreprocessConfig(BaseModel):
     data_path: Path = Path.cwd() / "data/silver/Phenikaa"
     exclude_files: list[str] = []
     id_col: str = "Patient ID"
-    corrupted_ids: list[int] = [25001, 250027783, 250026093, 250026925, 250026665, 250010269]
+    corrupted_ids: list[int] = [
+        25001,
+        250027783,
+        250026093,
+        250026925,
+        250026665,
+        250010269,
+    ]
     output_path: Path = Path.cwd() / "data/gold/classification"
     output_table: str = "radiological_labels.csv"
     model_path: Path = Path.cwd() / "weights/ocr"
@@ -113,9 +119,7 @@ def main(config: PreprocessConfig) -> None:
         use_gpu=config.use_gpu,
     )
 
-    report_lookup = {
-        path.stem: path for path in config.report_path.rglob("*.png")
-    }
+    report_lookup = {path.stem: path for path in config.report_path.rglob("*.png")}
 
     patient_matcher = PatientMatcher(
         image_path=config.image_path,
@@ -160,6 +164,3 @@ def main(config: PreprocessConfig) -> None:
     label_data = label_data[label_data[config.id_col].isin(matched_ids)]
     label_data.to_csv(config.output_table_path, index=False)
     logger.info(f"Saved table to {config.output_table_path}")
-
-
-

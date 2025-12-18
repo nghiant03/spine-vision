@@ -1,7 +1,7 @@
 import logging
 import re
-import warnings
 import shutil
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -34,7 +34,8 @@ def load_tabular_data(config: PreprocessConfig) -> pd.DataFrame:
     files_data = []
 
     valid_files = (
-        p for p in table_path.rglob("*") 
+        p
+        for p in table_path.rglob("*")
         if p.is_file() and p.name not in config.exclude_files
     )
 
@@ -51,17 +52,17 @@ def load_tabular_data(config: PreprocessConfig) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.concat(files_data)
-    
+
     initial_size = df.size
     df = df.drop_duplicates()
     logger.debug(f"Dropped {initial_size - df.size} duplicates.")
-    
+
     na_count = df.isna().any(axis=1).sum()
     df = df.dropna()
     logger.debug(f"Dropped {na_count} rows with NA.")
-    
+
     df = df[~df[config.id_col].isin(config.corrupted_ids)]
-    
+
     dummies = (
         df[ONE_HOT_COL]
         .astype(str)
@@ -69,10 +70,11 @@ def load_tabular_data(config: PreprocessConfig) -> pd.DataFrame:
         .str.get_dummies(sep="&")
         .add_prefix(f"{ONE_HOT_COL}_")
     )
-    
+
     df = pd.concat([df, dummies], axis=1).drop(columns=ONE_HOT_COL)
     logger.info("Loaded tabular data.")
     return df.astype(int)
+
 
 def crop_polygon(image_np: np.ndarray, points: np.ndarray) -> Image.Image:
     points = points.astype(np.float32)
@@ -86,18 +88,25 @@ def crop_polygon(image_np: np.ndarray, points: np.ndarray) -> Image.Image:
     height_b = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
     max_height = max(int(height_a), int(height_b))
 
-    dst = np.array([
-        [0, 0],
-        [max_width - 1, 0],
-        [max_width - 1, max_height - 1],
-        [0, max_height - 1]], dtype="float32")
+    dst = np.array(
+        [
+            [0, 0],
+            [max_width - 1, 0],
+            [max_width - 1, max_height - 1],
+            [0, max_height - 1],
+        ],
+        dtype="float32",
+    )
 
     M = cv2.getPerspectiveTransform(points, dst)
     warped = cv2.warpPerspective(image_np, M, (max_width, max_height))
 
     return Image.fromarray(warped)
 
-def fuzzy_value_extract(text_lines: list[str], field: str, threshold: float, window_length: int) -> str | None:
+
+def fuzzy_value_extract(
+    text_lines: list[str], field: str, threshold: float, window_length: int
+) -> str | None:
     field = field.lower()
     for line in text_lines:
         normalized_text = unidecode(line).lower().strip()
@@ -110,7 +119,7 @@ def fuzzy_value_extract(text_lines: list[str], field: str, threshold: float, win
         key_word_count = len(field.split())
 
         words = normalized_text.split()
-        
+
         if len(words) < key_word_count:
             continue
 
@@ -121,56 +130,67 @@ def fuzzy_value_extract(text_lines: list[str], field: str, threshold: float, win
         best_end_index = 0
         for i in range(min_len, max_len + 1):
             candidate_key = " ".join(words[:i])
-            
+
             candidate_clean = candidate_key.rstrip(" :.-")
-            
+
             score = fuzz.ratio(field, candidate_clean.lower())
-            
+
             if score > best_score:
                 best_score = score
                 best_end_index = i
 
         if best_score >= threshold:
             value_part = "".join(words[best_end_index:])
-            
+
             return value_part.lstrip(".:;").upper()
 
     return None
 
-def find_matching_folder(patient_name: str, patient_birthday: str, folder_map: dict[str, dict], threshold: float) -> Path | None:
+
+def find_matching_folder(
+    patient_name: str,
+    patient_birthday: str,
+    folder_map: dict[str, dict],
+    threshold: float,
+) -> Path | None:
     candidates = []
     patient_birth_year = datetime.strptime(patient_birthday, "%d/%m/%Y").year
-    
+
     for key, data in folder_map.items():
         key_name = data["name_part"]
         score = fuzz.partial_ratio(patient_name, key_name)
 
         if score > threshold:
-            candidates.append({
-                "key": key,
-                "score": score,
-                "birth_year": data["birth_year"],
-                "path": data["path"]
-            })
+            candidates.append(
+                {
+                    "key": key,
+                    "score": score,
+                    "birth_year": data["birth_year"],
+                    "path": data["path"],
+                }
+            )
 
     if not candidates:
         return None
-    
+
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    
+
     best_score = candidates[0]["score"]
-    top_matches = [candidate for candidate in candidates if candidate["score"] == best_score]
+    top_matches = [
+        candidate for candidate in candidates if candidate["score"] == best_score
+    ]
 
     if patient_birth_year:
         for match in top_matches:
             if match["birth_year"] == str(patient_birth_year):
-                return match["path"] 
+                return match["path"]
 
     for match in top_matches:
         if match["birth_year"] is None:
             return match["path"]
 
     return None
+
 
 def main(config: PreprocessConfig):
     warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
@@ -181,9 +201,9 @@ def main(config: PreprocessConfig):
         lambda msg: tqdm.write(msg, end=""),
         colorize=True,
         format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
-        level=log_level
+        level=log_level,
     )
-    
+
     if config.enable_file_log:
         config.log_path.mkdir(parents=True, exist_ok=True)
         logger.add(
@@ -191,7 +211,7 @@ def main(config: PreprocessConfig):
             level="DEBUG",
             rotation="10 MB",
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} | {message}",
-            encoding="utf-8"
+            encoding="utf-8",
         )
 
     logger.debug("Started preprocessing.")
@@ -209,25 +229,23 @@ def main(config: PreprocessConfig):
     detection_model = TextDetection(model_name="PP-OCRv5_server_det")
 
     recognition_config = Cfg.load_config_from_name("vgg_transformer")
-    
+
     recognition_config["device"] = device
     recognition_config["cnn"]["pretrained"] = False
     recognition_config["predictor"]["beamsearch"] = False
-    
+
     logger.info("Loading recognition model.")
     recognition_model = Predictor(recognition_config)
 
-    report_lookup = {
-        path.stem: path for path in config.report_path.rglob("*.png")
-    }
-    
+    report_lookup = {path.stem: path for path in config.report_path.rglob("*.png")}
+
     image_folder_dict = {}
 
     for path in config.image_path.rglob("*"):
         if path.is_dir() and IMAGE_FOLDER_REGEX.match(path.name):
             base_name = re.sub(r" \(\d+\)$", "", path.name)
             parts = base_name.split("_")
-            
+
             if len(parts) >= 3 and re.fullmatch(r"\d{4}", parts[-2]):
                 name_part = "".join(parts[:-2])
                 birth_year = parts[-2]
@@ -236,17 +254,17 @@ def main(config: PreprocessConfig):
                 name_part = "".join(parts[:-1])
                 birth_year = None
                 key = name_part
-            
+
             image_folder_dict[key] = {
                 "path": path,
                 "name_part": name_part,
-                "birth_year": birth_year
+                "birth_year": birth_year,
             }
 
     unique_ids = label_data[config.id_col].unique()
-    
+
     matched_ids = []
-    for unique_id in tqdm(unique_ids, desc="Processing Patients", unit="id"):        
+    for unique_id in tqdm(unique_ids, desc="Processing Patients", unit="id"):
         if not (report_path := report_lookup.get(str(unique_id))):
             continue
 
@@ -255,37 +273,52 @@ def main(config: PreprocessConfig):
 
         boxes = detection_result[0]["dt_polys"]
         image = Image.open(report_path).convert("RGB")
-        image_np = np.array(image) 
+        image_np = np.array(image)
 
         text_lines = []
         for box in boxes:
             box = np.array(box).astype(np.int32)
-            
+
             crop = crop_polygon(image_np, box)
-            
+
             text = recognition_model.predict(crop)
             text_lines.append(text)
 
-        if not (patient_name := fuzzy_value_extract(text_lines, NAME_FIELD_PATTERN, config.report_fuzzy_threshold, 3)):
+        if not (
+            patient_name := fuzzy_value_extract(
+                text_lines, NAME_FIELD_PATTERN, config.report_fuzzy_threshold, 3
+            )
+        ):
             logger.warning(f"Could not extract name for ID {unique_id}")
             continue
 
-        if not (patient_birthday := fuzzy_value_extract(text_lines, BIRTHDAY_FIELD_PATTERN, config.report_fuzzy_threshold, 2)):
+        if not (
+            patient_birthday := fuzzy_value_extract(
+                text_lines, BIRTHDAY_FIELD_PATTERN, config.report_fuzzy_threshold, 2
+            )
+        ):
             logger.warning(f"Could not extract birthday for ID {unique_id}")
             continue
 
-
-        if best_folder := find_matching_folder(patient_name, patient_birthday, image_folder_dict, config.image_fuzzy_threshold):
+        if best_folder := find_matching_folder(
+            patient_name,
+            patient_birthday,
+            image_folder_dict,
+            config.image_fuzzy_threshold,
+        ):
             dest = config.output_image_path / str(unique_id)
             shutil.copytree(best_folder, dest, dirs_exist_ok=True)
             logger.info(f"Copied {best_folder.name} -> {dest}")
             matched_ids.append(unique_id)
         else:
-            logger.warning(f"No matching folder found for name '{patient_name}' (ID: {unique_id})")
+            logger.warning(
+                f"No matching folder found for name '{patient_name}' (ID: {unique_id})"
+            )
 
     label_data = label_data[label_data[config.id_col].isin(matched_ids)]
     label_data.to_csv(config.output_table_path, index=False)
     logger.info(f"Saved table to {config.output_table_path}")
+
 
 if __name__ == "__main__":
     preprocess_config = tyro.cli(PreprocessConfig)

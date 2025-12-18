@@ -158,7 +158,9 @@ def process_lumbar_coords_pretrain(
                             img.save(output_path)
                             processed_files.add(output_filename)
                         else:
-                            logger.warning(f"File not found: {src_img_path} or {npy_path}")
+                            logger.warning(
+                                f"File not found: {src_img_path} or {npy_path}"
+                            )
                             continue
                     else:
                         logger.warning(f"File not found: {src_img_path}")
@@ -364,6 +366,3 @@ def main(config: IVDDatasetConfig) -> None:
     logger.info(f"Dataset saved to: {config.output_path}")
     logger.info(f"Annotations CSV: {csv_path}")
     logger.info(f"Images directory: {output_images_path}")
-
-
-

@@ -23,7 +23,10 @@ class VisualizeConfig(BaseModel):
 
     input_path: Path = Path.cwd() / "data/gold/classification/images/250029976/SAG T1"
     output_path: Path = Path.cwd() / "results/segmentation"
-    model_path: Path = Path.cwd() / "weights/segmentation/Dataset501_Spider/nnUNetTrainer__nnUNetPlans__2d"
+    model_path: Path = (
+        Path.cwd()
+        / "weights/segmentation/Dataset501_Spider/nnUNetTrainer__nnUNetPlans__2d"
+    )
     dataset_id: int = 501
     configuration: str = "2d"
     fold: int = 0
@@ -103,7 +106,9 @@ def visualize_batch(
 
             result = segmentation_model.predict_from_path(temp_input, temp_output)
 
-            mask = result.prediction if isinstance(result.prediction, sitk.Image) else None
+            mask = (
+                result.prediction if isinstance(result.prediction, sitk.Image) else None
+            )
             viewer.visualize(
                 image=image_sitk,
                 mask=mask,

@@ -3,22 +3,20 @@
 Specialized trainer for IVD localization with ConvNext models.
 """
 
-from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import numpy as np
 import torch
 import tyro
 from loguru import logger
-from PIL import Image
 from torch.utils.data import DataLoader
 
 from spine_vision.training.base import BaseTrainer, TrainingConfig, TrainingResult
 from spine_vision.training.datasets.ivd_coords import (
     IDX_TO_LEVEL,
+    NUM_LEVELS,
     IVDCoordsCollator,
     IVDCoordsDataset,
-    NUM_LEVELS,
 )
 from spine_vision.training.metrics import LocalizationMetrics
 from spine_vision.training.models.convnext import ConvNextLocalization
@@ -169,9 +167,7 @@ class LocalizationTrainer(
             collate_fn=IVDCoordsCollator(),
         )
 
-    def _unpack_batch(
-        self, batch: dict[str, Any]
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def _unpack_batch(self, batch: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
         """Unpack batch from IVDCoordsDataset."""
         return batch["image"], batch["coords"]
 
@@ -179,7 +175,11 @@ class LocalizationTrainer(
         """Training step with level embedding support."""
         inputs = batch["image"].to(self.device)
         targets = batch["coords"].to(self.device)
-        level_idx = batch["level_idx"].to(self.device) if self.config.use_level_embedding else None
+        level_idx = (
+            batch["level_idx"].to(self.device)
+            if self.config.use_level_embedding
+            else None
+        )
 
         self.optimizer.zero_grad()
 
@@ -227,7 +227,11 @@ class LocalizationTrainer(
             for batch_idx, batch in enumerate(self.val_loader):  # type: ignore[union-attr]
                 inputs = batch["image"].to(self.device)
                 targets = batch["coords"].to(self.device)
-                level_idx = batch["level_idx"].to(self.device) if self.config.use_level_embedding else None
+                level_idx = (
+                    batch["level_idx"].to(self.device)
+                    if self.config.use_level_embedding
+                    else None
+                )
 
                 if self.scaler:
                     with torch.cuda.amp.autocast():  # type: ignore[attr-defined]
@@ -392,7 +396,9 @@ class LocalizationTrainer(
             self._log_epoch(epoch, train_loss, val_loss, metrics)
 
             # Checkpointing (use MED as primary metric, lower is better)
-            metric_for_checkpoint = metrics.get("med", val_loss if val_loss else train_loss)
+            metric_for_checkpoint = metrics.get(
+                "med", val_loss if val_loss else train_loss
+            )
             is_best = metric_for_checkpoint < self.best_metric - self.config.min_delta
             if is_best:
                 self.best_metric = metric_for_checkpoint
@@ -406,7 +412,10 @@ class LocalizationTrainer(
                 self._save_checkpoint(is_best=False)
 
             # Early stopping
-            if self.config.early_stopping and self.patience_counter >= self.config.patience:
+            if (
+                self.config.early_stopping
+                and self.patience_counter >= self.config.patience
+            ):
                 logger.info(f"Early stopping at epoch {epoch + 1}")
                 break
 
@@ -419,7 +428,9 @@ class LocalizationTrainer(
             best_epoch=self.best_epoch,
             best_metric=self.best_metric,
             final_train_loss=self.history["train_loss"][-1],
-            final_val_loss=self.history["val_loss"][-1] if self.history["val_loss"] else 0.0,
+            final_val_loss=self.history["val_loss"][-1]
+            if self.history["val_loss"]
+            else 0.0,
             history=self.history,
             checkpoint_path=best_checkpoint,
         )
@@ -473,9 +484,13 @@ class LocalizationTrainer(
                 filename="per_level_med",
             )
 
-        logger.info(f"Visualizations saved to: {self.config.output_path / 'visualizations'}")
+        logger.info(
+            f"Visualizations saved to: {self.config.output_path / 'visualizations'}"
+        )
 
-    def evaluate(self, test_dataset: IVDCoordsDataset | None = None) -> dict[str, float]:
+    def evaluate(
+        self, test_dataset: IVDCoordsDataset | None = None
+    ) -> dict[str, float]:
         """Evaluate model on test set.
 
         Args:

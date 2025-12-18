@@ -14,7 +14,6 @@ from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-
 # IVD level mapping (L1/L2 to L5/S1)
 LEVEL_TO_IDX = {
     "L1/L2": 0,
@@ -118,14 +117,16 @@ class IVDCoordsDataset(Dataset[dict[str, Any]]):
         with open(path, newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                records.append({
-                    "image_path": row["image_path"],
-                    "level": row["level"],
-                    "relative_x": float(row["relative_x"]),
-                    "relative_y": float(row["relative_y"]),
-                    "series_type": row["series_type"],
-                    "source": row["source"],
-                })
+                records.append(
+                    {
+                        "image_path": row["image_path"],
+                        "level": row["level"],
+                        "relative_x": float(row["relative_x"]),
+                        "relative_y": float(row["relative_y"]),
+                        "series_type": row["series_type"],
+                        "source": row["source"],
+                    }
+                )
         return records
 
     def _get_unique_images(self) -> list[str]:
@@ -163,22 +164,26 @@ class IVDCoordsDataset(Dataset[dict[str, Any]]):
         ]
 
         if self.augment:
-            transform_list.extend([
-                transforms.RandomHorizontalFlip(p=0.5),
-                transforms.RandomAffine(
-                    degrees=10,
-                    translate=(0.05, 0.05),
-                    scale=(0.95, 1.05),
-                ),
-                transforms.ColorJitter(
-                    brightness=0.2,
-                    contrast=0.2,
-                ),
-            ])
+            transform_list.extend(
+                [
+                    transforms.RandomHorizontalFlip(p=0.5),
+                    transforms.RandomAffine(
+                        degrees=10,
+                        translate=(0.05, 0.05),
+                        scale=(0.95, 1.05),
+                    ),
+                    transforms.ColorJitter(
+                        brightness=0.2,
+                        contrast=0.2,
+                    ),
+                ]
+            )
 
-        transform_list.extend([
-            transforms.ToTensor(),
-        ])
+        transform_list.extend(
+            [
+                transforms.ToTensor(),
+            ]
+        )
 
         if self.normalize:
             # ImageNet normalization

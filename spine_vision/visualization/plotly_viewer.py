@@ -228,12 +228,16 @@ class PlotlyViewer:
         Returns:
             List of Plotly Figure objects.
         """
-        masks_list: list[sitk.Image | None] = list(masks) if masks else [None] * len(images)
+        masks_list: list[sitk.Image | None] = (
+            list(masks) if masks else [None] * len(images)
+        )
         titles_list = titles or [f"Image {i}" for i in range(len(images))]
         filenames_list = filenames or [f"visualization_{i}" for i in range(len(images))]
 
         figures = []
-        for img, mask, title, fname in zip(images, masks_list, titles_list, filenames_list):
+        for img, mask, title, fname in zip(
+            images, masks_list, titles_list, filenames_list
+        ):
             fig = self.visualize(img, mask, title, fname)
             figures.append(fig)
 

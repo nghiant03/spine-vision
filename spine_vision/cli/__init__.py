@@ -13,27 +13,42 @@ from typing import Annotated, Union
 
 import tyro
 
-from spine_vision.datasets.nnunet import ConvertConfig, main as nnunet_main
-from spine_vision.datasets.ivd_coords import IVDDatasetConfig, main as ivd_coords_main
-from spine_vision.datasets.phenikaa import PreprocessConfig, main as phenikaa_main
-from spine_vision.cli.visualize import VisualizeConfig, main as visualize_main
 from spine_vision.cli.train import main as train_main
+from spine_vision.cli.visualize import VisualizeConfig
+from spine_vision.cli.visualize import main as visualize_main
+from spine_vision.datasets.ivd_coords import IVDDatasetConfig
+from spine_vision.datasets.ivd_coords import main as ivd_coords_main
+from spine_vision.datasets.nnunet import ConvertConfig
+from spine_vision.datasets.nnunet import main as nnunet_main
+from spine_vision.datasets.phenikaa import PreprocessConfig
+from spine_vision.datasets.phenikaa import main as phenikaa_main
 from spine_vision.training.trainers.localization import LocalizationConfig
-
 
 DatasetSubcommand = Annotated[
     Union[
         Annotated[
             ConvertConfig,
-            tyro.conf.subcommand("nnunet", prefix_name=False, description="Convert datasets to nnU-Net format"),
+            tyro.conf.subcommand(
+                "nnunet",
+                prefix_name=False,
+                description="Convert datasets to nnU-Net format",
+            ),
         ],
         Annotated[
             IVDDatasetConfig,
-            tyro.conf.subcommand("ivd-coords", prefix_name=False, description="Create IVD coordinates dataset"),
+            tyro.conf.subcommand(
+                "ivd-coords",
+                prefix_name=False,
+                description="Create IVD coordinates dataset",
+            ),
         ],
         Annotated[
             PreprocessConfig,
-            tyro.conf.subcommand("phenikaa", prefix_name=False, description="Preprocess Phenikaa dataset (OCR + matching)"),
+            tyro.conf.subcommand(
+                "phenikaa",
+                prefix_name=False,
+                description="Preprocess Phenikaa dataset (OCR + matching)",
+            ),
         ],
     ],
     tyro.conf.arg(name=""),
@@ -44,7 +59,11 @@ TrainSubcommand = Annotated[
     Union[
         Annotated[
             LocalizationConfig,
-            tyro.conf.subcommand("localization", prefix_name=False, description="Train localization model (ConvNext)"),
+            tyro.conf.subcommand(
+                "localization",
+                prefix_name=False,
+                description="Train localization model (ConvNext)",
+            ),
         ],
     ],
     tyro.conf.arg(name=""),

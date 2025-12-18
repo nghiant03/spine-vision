@@ -9,7 +9,14 @@ class PreprocessConfig(BaseModel):
     data_path: Path = Path.cwd() / "data/silver/Phenikaa"
     exclude_files: list[str] = []
     id_col: str = "Patient ID"
-    corrupted_ids: list[int] = [25001, 250027783, 250026093, 250026925, 250026665, 250010269]
+    corrupted_ids: list[int] = [
+        25001,
+        250027783,
+        250026093,
+        250026925,
+        250026665,
+        250010269,
+    ]
     output_path: Path = Path.cwd() / "data/gold/classification"
     output_table: str = "radiological_labels.csv"
     model_path: Path = Path.cwd() / "weights/ocr"
@@ -21,7 +28,6 @@ class PreprocessConfig(BaseModel):
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
     enable_file_log: bool = False
     log_path: Path = Path.cwd() / "logs"
-
 
     @computed_field
     @property
@@ -91,7 +97,10 @@ class ConvertConfig(BaseModel):
 class VisualizeConfig(BaseModel):
     input_path: Path = Path.cwd() / "data/gold/classification/images/250029976/SAG T1"
     output_path: Path = Path.cwd() / "results/segmentation"
-    model_path: Path = Path.cwd() / "weights/segmentation/Dataset501_Spider/nnUNetTrainer__nnUNetPlans__2d"
+    model_path: Path = (
+        Path.cwd()
+        / "weights/segmentation/Dataset501_Spider/nnUNetTrainer__nnUNetPlans__2d"
+    )
     dataset_id: int = 501
     configuration: str = "2d"
     fold: int = 0

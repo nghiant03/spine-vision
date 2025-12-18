@@ -8,7 +8,6 @@ from typing import TypedDict
 from loguru import logger
 from rapidfuzz import fuzz
 
-
 IMAGE_FOLDER_REGEX = re.compile(r"^[A-Z_]+(_\d{4})?_\d{8}( \(\d+\))?$")
 
 

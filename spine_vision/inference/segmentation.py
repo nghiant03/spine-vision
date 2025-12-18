@@ -83,6 +83,7 @@ class NNUNetSegmentation(InferenceModel):
             prob_path = output_dir / "case.npz"
             if self.save_probabilities and prob_path.exists():
                 import numpy as np
+
                 probabilities = np.load(prob_path)["probabilities"]
 
         return InferenceResult(
@@ -131,11 +132,16 @@ class NNUNetSegmentation(InferenceModel):
         """Execute nnUNetv2_predict CLI command."""
         cmd = [
             "nnUNetv2_predict",
-            "-i", str(input_dir),
-            "-o", str(output_dir),
-            "-d", str(self.dataset_id),
-            "-c", self.configuration,
-            "-f", str(self.fold),
+            "-i",
+            str(input_dir),
+            "-o",
+            str(output_dir),
+            "-d",
+            str(self.dataset_id),
+            "-c",
+            self.configuration,
+            "-f",
+            str(self.fold),
         ]
 
         if self.save_probabilities:

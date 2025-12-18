@@ -25,6 +25,7 @@ LABEL_NAMES: dict[str, int] = {
     **{f"Disc_{201 + i}": 27 + i for i in range(25)},
 }
 
+
 def remap_labels(mask_array: np.ndarray, mapping: dict[int, int]) -> np.ndarray:
     remapped = np.zeros_like(mask_array)
     for old_label, new_label in mapping.items():
@@ -94,7 +95,9 @@ def main(config: ConvertConfig) -> None:
     image_files = sorted(config.input_images_path.glob(f"*{config.file_extension}"))
 
     if not image_files:
-        logger.error(f"No {config.file_extension} files found in {config.input_images_path}")
+        logger.error(
+            f"No {config.file_extension} files found in {config.input_images_path}"
+        )
         return
 
     logger.info(f"Found {len(image_files)} files. Starting conversion...")
@@ -113,7 +116,9 @@ def main(config: ConvertConfig) -> None:
         ):
             successful += 1
 
-    generate_dataset_json(config.output_path, successful, config.channel_name, LABEL_NAMES)
+    generate_dataset_json(
+        config.output_path, successful, config.channel_name, LABEL_NAMES
+    )
     logger.info(f"Conversion complete: {successful}/{len(image_files)} files processed")
 
 

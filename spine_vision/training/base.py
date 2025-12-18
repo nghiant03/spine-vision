@@ -208,9 +208,7 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         # Create data loaders
         self.train_loader = self._create_dataloader(train_dataset, shuffle=True)
         self.val_loader = (
-            self._create_dataloader(val_dataset, shuffle=False)
-            if val_dataset
-            else None
+            self._create_dataloader(val_dataset, shuffle=False) if val_dataset else None
         )
 
         # Setup optimizer and scheduler
@@ -371,7 +369,10 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
                 self._save_checkpoint(is_best=False)
 
             # Early stopping
-            if self.config.early_stopping and self.patience_counter >= self.config.patience:
+            if (
+                self.config.early_stopping
+                and self.patience_counter >= self.config.patience
+            ):
                 logger.info(f"Early stopping at epoch {epoch + 1}")
                 break
 
@@ -384,7 +385,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             best_epoch=self.best_epoch,
             best_metric=self.best_metric,
             final_train_loss=self.history["train_loss"][-1],
-            final_val_loss=self.history["val_loss"][-1] if self.history["val_loss"] else 0.0,
+            final_val_loss=self.history["val_loss"][-1]
+            if self.history["val_loss"]
+            else 0.0,
             history=self.history,
             checkpoint_path=best_checkpoint,
         )
@@ -530,7 +533,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
     ) -> None:
         """Log epoch results."""
         lr = self.optimizer.param_groups[0]["lr"]
-        msg = f"Epoch {epoch + 1}/{self.config.num_epochs} - Train Loss: {train_loss:.6f}"
+        msg = (
+            f"Epoch {epoch + 1}/{self.config.num_epochs} - Train Loss: {train_loss:.6f}"
+        )
         if val_loss is not None:
             msg += f" - Val Loss: {val_loss:.6f}"
         for key, value in metrics.items():
@@ -544,7 +549,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             "epoch": self.current_epoch,
             "model_state_dict": self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
+            "scheduler_state_dict": self.scheduler.state_dict()
+            if self.scheduler
+            else None,
             "best_metric": self.best_metric,
             "best_epoch": self.best_epoch,
             "history": self.history,
@@ -554,7 +561,10 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         if is_best:
             path = self.config.output_path / "best_model.pt"
         else:
-            path = self.config.output_path / f"checkpoint_epoch_{self.current_epoch + 1}.pt"
+            path = (
+                self.config.output_path
+                / f"checkpoint_epoch_{self.current_epoch + 1}.pt"
+            )
 
         torch.save(checkpoint, path)
         logger.debug(f"Saved checkpoint: {path}")

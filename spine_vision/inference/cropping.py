@@ -122,19 +122,10 @@ class ROICropper(InferenceModel):
         origin = image.GetOrigin()
         img_size = image.GetSize()
 
-        center_idx = [
-            int((center[i] - origin[i]) / spacing[i])
-            for i in range(3)
-        ]
+        center_idx = [int((center[i] - origin[i]) / spacing[i]) for i in range(3)]
 
-        start_idx = [
-            max(0, center_idx[i] - size[i] // 2)
-            for i in range(3)
-        ]
-        end_idx = [
-            min(img_size[i], center_idx[i] + size[i] // 2)
-            for i in range(3)
-        ]
+        start_idx = [max(0, center_idx[i] - size[i] // 2) for i in range(3)]
+        end_idx = [min(img_size[i], center_idx[i] + size[i] // 2) for i in range(3)]
 
         crop_size = [end_idx[i] - start_idx[i] for i in range(3)]
 
@@ -151,7 +142,10 @@ class ROICropper(InferenceModel):
             for i in range(3)
         ]
         end_idx = [
-            min(img_size[i], int((box.max_coords[i] - origin[i]) / spacing[i]) + self.padding[i])
+            min(
+                img_size[i],
+                int((box.max_coords[i] - origin[i]) / spacing[i]) + self.padding[i],
+            )
             for i in range(3)
         ]
 
@@ -190,10 +184,7 @@ def crop_to_nonzero(
 
     img_size = image.GetSize()
     start_idx = [min_idx[2], min_idx[1], min_idx[0]]
-    end_idx = [
-        min(img_size[i], max_idx[2 - i] + 1)
-        for i in range(3)
-    ]
+    end_idx = [min(img_size[i], max_idx[2 - i] + 1) for i in range(3)]
 
     crop_size = [end_idx[i] - start_idx[i] for i in range(3)]
 

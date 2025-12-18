@@ -9,7 +9,6 @@ from loguru import logger
 from openpyxl.reader.excel import SUPPORTED_FORMATS
 from pydantic import BaseModel
 
-
 EXCEL_FORMATS = (*SUPPORTED_FORMATS, ".xls")
 
 
@@ -63,9 +62,7 @@ def load_tabular_data(
 
     files_data = []
     valid_files = (
-        p
-        for p in table_path.rglob("*")
-        if p.is_file() and p.name not in exclude_files
+        p for p in table_path.rglob("*") if p.is_file() and p.name not in exclude_files
     )
 
     for file_path in valid_files:

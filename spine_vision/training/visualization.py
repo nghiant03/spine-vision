@@ -114,7 +114,9 @@ class TrainingVisualizer:
 
         # Metrics
         if has_metrics:
-            metric_keys = [k for k in history if k not in ["train_loss", "val_loss", "lr"]]
+            metric_keys = [
+                k for k in history if k not in ["train_loss", "val_loss", "lr"]
+            ]
             colors = ["green", "orange", "purple", "cyan", "magenta"]
             for i, key in enumerate(metric_keys[:5]):  # Limit to 5 metrics
                 if history[key]:
@@ -370,7 +372,9 @@ class TrainingVisualizer:
 
         # Cumulative error (sorted)
         sorted_distances = np.sort(distances)
-        cumulative = np.arange(1, len(sorted_distances) + 1) / len(sorted_distances) * 100
+        cumulative = (
+            np.arange(1, len(sorted_distances) + 1) / len(sorted_distances) * 100
+        )
         fig.add_trace(
             go.Scatter(
                 x=sorted_distances,

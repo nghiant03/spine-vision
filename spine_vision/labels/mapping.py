@@ -102,7 +102,10 @@ def load_label_schema(schema_path: Path | str) -> LabelSchema:
     if not schema_path.exists():
         # Check datasets/schemas for built-in schemas
         datasets_schema_path = (
-            Path(__file__).parent.parent / "datasets" / "schemas" / f"{schema_path.stem}.yaml"
+            Path(__file__).parent.parent
+            / "datasets"
+            / "schemas"
+            / f"{schema_path.stem}.yaml"
         )
         if datasets_schema_path.exists():
             schema_path = datasets_schema_path
@@ -146,6 +149,3 @@ def generate_nnunet_labels(schema: LabelSchema) -> dict[str, int]:
         Dictionary in nnU-Net dataset.json format.
     """
     return {"background": 0, **schema.target_labels}
-
-
-

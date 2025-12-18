@@ -30,11 +30,16 @@ def run_nnunet_prediction(config: VisualizeConfig) -> None:
     logger.info("Running nnU-Net prediction...")
     cmd = [
         "nnUNetv2_predict",
-        "-i", str(config.temp_input_path),
-        "-o", str(config.temp_output_path),
-        "-d", str(config.dataset_id),
-        "-c", config.configuration,
-        "-f", str(config.fold),
+        "-i",
+        str(config.temp_input_path),
+        "-o",
+        str(config.temp_output_path),
+        "-d",
+        str(config.dataset_id),
+        "-c",
+        config.configuration,
+        "-f",
+        str(config.fold),
     ]
 
     if config.save_probabilities:
@@ -178,7 +183,9 @@ def main(config: VisualizeConfig) -> None:
             fig.write_html(html_path)
             logger.info(f"Saved HTML visualization to {html_path}")
     else:
-        logger.warning(f"Unknown output_mode {config.output_mode}, defaulting to browser")
+        logger.warning(
+            f"Unknown output_mode {config.output_mode}, defaulting to browser"
+        )
         fig.show()
 
     logger.info("Visualization complete")

@@ -15,9 +15,9 @@ from tqdm.std import TqdmExperimentalWarning
 from spine_vision.core.logging import setup_logger
 from spine_vision.labels.mapping import (
     LabelSchema,
+    generate_nnunet_labels,
     load_label_schema,
     remap_labels,
-    generate_nnunet_labels,
 )
 
 
@@ -138,7 +138,9 @@ def main(config: ConvertConfig) -> None:
     image_files = sorted(config.input_images_path.glob(f"*{config.file_extension}"))
 
     if not image_files:
-        logger.error(f"No {config.file_extension} files found in {config.input_images_path}")
+        logger.error(
+            f"No {config.file_extension} files found in {config.input_images_path}"
+        )
         return
 
     logger.info(f"Found {len(image_files)} files. Starting conversion...")
@@ -160,6 +162,3 @@ def main(config: ConvertConfig) -> None:
 
     generate_dataset_json(config.output_path, successful, config.channel_name, schema)
     logger.info(f"Conversion complete: {successful}/{len(image_files)} files processed")
-
-
-

@@ -1,7 +1,7 @@
 """Medical image readers supporting multiple formats."""
 
-from pathlib import Path
 from enum import Enum, auto
+from pathlib import Path
 
 import SimpleITK as sitk
 from loguru import logger

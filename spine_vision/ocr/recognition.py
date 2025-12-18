@@ -1,6 +1,5 @@
 """Text recognition using VietOCR."""
 
-
 import numpy as np
 from loguru import logger
 from PIL import Image
