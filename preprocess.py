@@ -199,6 +199,7 @@ def main(config: PreprocessConfig):
     if label_data.empty:
         logger.info(f"No valid data found at {config.table_path}")
         return
+    label_data.to_csv(config.table_path / "full_radiological_gradings.csv", index=False)
 
     config.output_path.mkdir(parents=True, exist_ok=True)
     logger.debug(f"Unique Patients: {label_data[config.id_col].nunique()}")
