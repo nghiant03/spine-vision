@@ -3124,7 +3124,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rapidfuzz", specifier = ">=3.14.3" },
     { name = "rich", specifier = ">=14.2.0" },
-    { name = "setuptools", specifier = ">=80.9.0" },
+    { name = "setuptools", specifier = "<81" },
     { name = "simpleitk", specifier = ">=2.5.3" },
     { name = "torch", specifier = "<2.9" },
     { name = "torchvision", specifier = ">=0.23.0" },
