@@ -1,7 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["spine_vision*"]
+
 [project]
 name = "spine-vision"
 version = "0.1.0"
-description = "Add your description here"
+description = "Medical imaging pipeline for lumbar spine MRI analysis and radiological grading prediction"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -39,5 +46,16 @@ dev = [
     "plotly-stubs>=0.1.1",
 ]
 
+[project.scripts]
+spine-vision = "spine_vision.cli:cli"
+
+[tool.uv]
+package = true
+
 [tool.uv.sources]
 nnunetv2 = { git = "https://github.com/MIC-DKFZ/nnUNet" }
+
+[tool.pyright]
+include = ["spine_vision"]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
