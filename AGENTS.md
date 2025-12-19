@@ -523,3 +523,9 @@ No test suite currently configured. When adding tests:
 ```bash
 uv run pyright spine_vision
 ```
+
+## Linting
+
+```bash
+uv run ruff check --fix spine_vision
+```

@@ -1,6 +1,5 @@
 """Training CLI command configuration and entry point."""
 
-from typing import Annotated
 
 import tyro
 from loguru import logger

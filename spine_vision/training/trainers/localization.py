@@ -4,11 +4,10 @@ Specialized trainer for IVD localization with ConvNext models.
 Uses HuggingFace Accelerate and supports wandb logging.
 """
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 import numpy as np
 import torch
-import tyro
 from loguru import logger
 from torch.utils.data import DataLoader
 

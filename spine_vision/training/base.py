@@ -20,7 +20,7 @@ import torch.nn as nn
 from accelerate import Accelerator
 from loguru import logger
 from PIL import Image
-from pydantic import field_validator, model_validator
+from pydantic import model_validator
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader, Dataset
