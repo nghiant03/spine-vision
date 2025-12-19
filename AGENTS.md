@@ -247,22 +247,30 @@ from spine_vision.training import (
     BaseModel, BaseTrainer, TrainingConfig, TrainingResult,
     # Dataset
     IVDCoordsDataset,
-    # Models
-    ConvNextLocalization,
+    # Models (via timm)
+    ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization,
     # Trainers
     LocalizationConfig, LocalizationTrainer,
     # Metrics & Visualization
     LocalizationMetrics, TrainingVisualizer,
 )
 
-# Training localization model
+# Training localization model with wandb logging
+# Output structure: weights/localization/<run_id>/
+#   - best_model.pt, checkpoint_epoch_N.pt
+#   - config.yaml (saved automatically)
+#   - logs/ (training_curves.html, predictions_epoch_N.html, etc.)
 config = LocalizationConfig(
     data_path=Path("data/gold/ivd_coords"),
-    output_path=Path("outputs/localization"),
-    model_variant="base",  # tiny, small, base, large
+    # output_path auto-generated: weights/localization/<run_id>
+    # run_id auto-generated if not provided
+    model_variant="base",  # tiny, small, base, large, xlarge, v2_tiny, v2_small, v2_base, v2_large, v2_huge
     batch_size=32,
     num_epochs=100,
     learning_rate=1e-4,
+    use_wandb=True,  # Enable wandb logging (run_name synced with run_id)
+    wandb_project="spine-vision",
+    # wandb_run_name defaults to run_id for easy mapping
 )
 trainer = LocalizationTrainer(config)
 result = trainer.train()
@@ -279,12 +287,29 @@ dataset = IVDCoordsDataset(
     augment=True,
 )
 
+# Test model inference with images
+model = ConvNextLocalization(variant="base", pretrained=True)
+model.load_state_dict(torch.load("best_model.pt")["model_state_dict"])
+result = model.test_inference(
+    images=["image1.png", "image2.png"],
+    image_size=(224, 224),
+    device="cuda:0",
+    level_indices=[0, 1],  # L1/L2, L2/L3
+)
+print(result["predictions"])  # Predicted coordinates [N, 2]
+print(result["coords_pixel"])  # Coordinates in pixel space
+print(result["inference_time_ms"])  # Inference time
+
 # Metrics computation
 metrics = LocalizationMetrics(pck_thresholds=[0.02, 0.05, 0.10])
 result = metrics.compute(predictions, targets, levels)
 
-# Training visualization
-visualizer = TrainingVisualizer(output_path=Path("vis/"), output_mode="html")
+# Training visualization with wandb
+visualizer = TrainingVisualizer(
+    output_path=Path("vis/"),
+    output_mode="html",
+    use_wandb=True,  # Also log to wandb
+)
 visualizer.plot_training_curves(history)
 visualizer.plot_error_distribution(predictions, targets, levels)
 ```
@@ -339,8 +364,8 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--data-path` | IVD coordinates dataset path | `data/gold/ivd_coords` |
-| `--output-path` | Training output directory | `outputs/training` |
-| `--model-variant` | ConvNext variant (`tiny`, `small`, `base`, `large`) | `base` |
+| `--output-path` | Training output directory | `weights/<task>/<run_id>` |
+| `--model-variant` | ConvNext variant (`tiny`, `small`, `base`, `large`, `xlarge`, `v2_tiny`, `v2_small`, `v2_base`, `v2_large`, `v2_huge`) | `base` |
 | `--batch-size` | Training batch size | `32` |
 | `--num-epochs` | Number of training epochs | `100` |
 | `--learning-rate` | Learning rate | `1e-4` |
@@ -352,10 +377,15 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | `--levels` | Filter IVD levels (e.g., `L4/L5 L5/S1`) | None |
 | `--image-size` | Target image size (H W) | `224 224` |
 | `--augment` | Enable data augmentation | `True` |
-| `--mixed-precision` | Use mixed precision training | `True` |
+| `--mixed-precision` | Use mixed precision training (via Accelerate) | `True` |
 | `--early-stopping` | Enable early stopping | `True` |
 | `--patience` | Early stopping patience | `20` |
 | `--visualize-predictions` | Generate prediction visualizations | `True` |
+| `--use-wandb` | Enable wandb logging | `False` |
+| `--wandb-project` | Wandb project name | `spine-vision` |
+| `--run-id` | Unique run identifier | Auto-generated |
+| `--wandb-run-name` | Wandb run name | Same as run_id |
+| `--wandb-tags` | Wandb tags (e.g., `exp1 baseline`) | None |
 | `-v, --verbose` | Debug logging | `False` |
 
 ## Adding New Components
@@ -422,13 +452,15 @@ Command = Union[
 Create a new model in `spine_vision/training/models/`:
 ```python
 # spine_vision/training/models/my_model.py
+import timm
 from spine_vision.training.base import BaseModel
 
 class MyModel(BaseModel):
     def __init__(self, num_classes: int = 4) -> None:
         super().__init__()
-        self.backbone = ...
-        self.head = ...
+        # Use timm for pretrained backbones
+        self.backbone = timm.create_model("resnet50", pretrained=True, num_classes=0)
+        self.head = nn.Linear(self.backbone.num_features, num_classes)
     
     @property
     def name(self) -> str:
@@ -439,6 +471,9 @@ class MyModel(BaseModel):
     
     def get_loss(self, predictions: torch.Tensor, targets: torch.Tensor, **kwargs) -> torch.Tensor:
         return F.cross_entropy(predictions, targets)
+    
+    # test_inference() is already provided by BaseModel
+    # Override for custom behavior if needed
 ```
 
 ### New Training Task
@@ -450,6 +485,8 @@ from spine_vision.training.base import BaseTrainer, TrainingConfig
 class MyTaskConfig(TrainingConfig):
     """Configuration for my task."""
     my_param: int = 10
+    # Wandb options are inherited from TrainingConfig:
+    # use_wandb, wandb_project, wandb_run_name, wandb_tags
 
 class MyTaskTrainer(BaseTrainer[MyTaskConfig, MyModel, MyDataset]):
     def _unpack_batch(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
@@ -470,6 +507,9 @@ Then register in `spine_vision/cli/__init__.py` under `TrainSubcommand`.
 5. **Birthday parsing**: Expects `DD/MM/YYYY` format in OCR output
 6. **Legacy scripts**: Root-level `preprocess.py`, `convert.py`, `visualize.py` are deprecated - use CLI entry points
 7. **nnUNet source**: Installed from GitHub via uv sources
+8. **Training backend**: Uses HuggingFace Accelerate for distributed training and mixed precision
+9. **Model backbones**: Uses timm for pretrained models with extensive architecture support
+10. **Wandb logging**: Optional integration for experiment tracking (set `use_wandb=True`)
 
 ## Testing
 

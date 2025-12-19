@@ -1,6 +1,7 @@
 """Localization trainer for coordinate regression.
 
 Specialized trainer for IVD localization with ConvNext models.
+Uses HuggingFace Accelerate and supports wandb logging.
 """
 
 from typing import Annotated, Any, Literal
@@ -26,9 +27,15 @@ from spine_vision.training.visualization import TrainingVisualizer
 class LocalizationConfig(TrainingConfig):
     """Configuration for localization training."""
 
+    # Override task name for output path structure
+    task: str = "localization"
+
     # Model configuration
-    model_variant: Literal["tiny", "small", "base", "large"] = "base"
-    """ConvNext variant to use."""
+    model_variant: Literal[
+        "tiny", "small", "base", "large", "xlarge",
+        "v2_tiny", "v2_small", "v2_base", "v2_large", "v2_huge"
+    ] = "base"
+    """ConvNext variant to use (timm models)."""
 
     pretrained: bool = True
     """Use ImageNet pretrained weights."""
@@ -74,14 +81,15 @@ class LocalizationConfig(TrainingConfig):
     num_visualization_samples: int = 16
     """Number of samples to visualize."""
 
-    verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
-    """Enable verbose logging."""
-
 
 class LocalizationTrainer(
     BaseTrainer[LocalizationConfig, ConvNextLocalization, IVDCoordsDataset]
 ):
-    """Trainer for IVD localization with coordinate regression."""
+    """Trainer for IVD localization with coordinate regression.
+
+    Uses HuggingFace Accelerate for distributed training and mixed precision.
+    Supports optional wandb logging for experiment tracking.
+    """
 
     def __init__(
         self,
@@ -142,10 +150,11 @@ class LocalizationTrainer(
             level_names=list(IDX_TO_LEVEL.values()),
         )
 
-        # Visualizer
+        # Visualizer with wandb support - save to logs/
         self.visualizer = TrainingVisualizer(
-            output_path=config.output_path / "visualizations",
+            output_path=config.logs_path,
             output_mode="html",
+            use_wandb=config.use_wandb,
         )
 
         # Track backbone freeze state
@@ -173,38 +182,30 @@ class LocalizationTrainer(
 
     def _train_step(self, batch: dict[str, Any]) -> float:
         """Training step with level embedding support."""
-        inputs = batch["image"].to(self.device)
-        targets = batch["coords"].to(self.device)
+        inputs = batch["image"]
+        targets = batch["coords"]
         level_idx = (
-            batch["level_idx"].to(self.device)
+            batch["level_idx"]
             if self.config.use_level_embedding
             else None
         )
 
         self.optimizer.zero_grad()
 
-        if self.scaler:
-            with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
-                predictions = self.model(inputs, level_idx)
-                loss = self.model.get_loss(predictions, targets)
-
-            self.scaler.scale(loss).backward()
-            if self.config.grad_clip:
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.config.grad_clip
-                )
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-        else:
+        # Accelerator handles mixed precision and device placement
+        with self.accelerator.autocast():
             predictions = self.model(inputs, level_idx)
-            loss = self.model.get_loss(predictions, targets)
-            loss.backward()
-            if self.config.grad_clip:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.config.grad_clip
-                )
-            self.optimizer.step()
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            loss = unwrapped_model.get_loss(predictions, targets)
+
+        self.accelerator.backward(loss)
+
+        if self.config.grad_clip:
+            self.accelerator.clip_grad_norm_(
+                self.model.parameters(), self.config.grad_clip
+            )
+
+        self.optimizer.step()
 
         return loss.item()
 
@@ -225,33 +226,36 @@ class LocalizationTrainer(
 
         with torch.no_grad():
             for batch_idx, batch in enumerate(self.val_loader):  # type: ignore[union-attr]
-                inputs = batch["image"].to(self.device)
-                targets = batch["coords"].to(self.device)
+                inputs = batch["image"]
+                targets = batch["coords"]
                 level_idx = (
-                    batch["level_idx"].to(self.device)
+                    batch["level_idx"]
                     if self.config.use_level_embedding
                     else None
                 )
 
-                if self.scaler:
-                    with torch.amp.autocast("cuda"):  # type: ignore[attr-defined]
-                        predictions = self.model(inputs, level_idx)
-                        loss = self.model.get_loss(predictions, targets)
-                else:
+                with self.accelerator.autocast():
                     predictions = self.model(inputs, level_idx)
-                    loss = self.model.get_loss(predictions, targets)
+                    unwrapped_model = self.accelerator.unwrap_model(self.model)
+                    loss = unwrapped_model.get_loss(predictions, targets)
 
                 total_loss += loss.item()
                 num_batches += 1
 
-                all_predictions.append(predictions.cpu())
-                all_targets.append(targets.cpu())
-                all_levels.append(batch["level_idx"])
+                # Gather from all processes
+                all_preds: torch.Tensor = self.accelerator.gather(predictions)  # type: ignore[assignment]
+                all_tgts: torch.Tensor = self.accelerator.gather(targets)  # type: ignore[assignment]
+                all_lvls: torch.Tensor = self.accelerator.gather(batch["level_idx"])  # type: ignore[assignment]
+
+                all_predictions.append(all_preds.cpu())
+                all_targets.append(all_tgts.cpu())
+                all_levels.append(all_lvls.cpu())
                 all_metadata.extend(batch["metadata"])
 
-                # Collect samples for visualization
+                # Collect samples for visualization (only on main process)
                 if (
                     self.config.visualize_predictions
+                    and self.accelerator.is_main_process
                     and len(sample_images) < self.config.num_visualization_samples
                 ):
                     # Store first few batches of images (denormalized)
@@ -278,8 +282,12 @@ class LocalizationTrainer(
             levels_cat.numpy(),
         )
 
-        # Generate visualizations
-        if self.config.visualize_predictions and sample_images:
+        # Generate visualizations (only on main process)
+        if (
+            self.config.visualize_predictions
+            and sample_images
+            and self.accelerator.is_main_process
+        ):
             n_vis = min(len(sample_images), self.config.num_visualization_samples)
             vis_preds = predictions_cat[:n_vis].numpy()
             vis_targets = targets_cat[:n_vis].numpy()
@@ -331,20 +339,25 @@ class LocalizationTrainer(
 
         result = self._train_loop()
 
-        # Generate final visualizations
-        self._generate_final_visualizations()
+        # Generate final visualizations (only on main process)
+        if self.accelerator.is_main_process:
+            self._generate_final_visualizations()
 
         return result
 
     def _train_loop(self) -> TrainingResult:
         """Main training loop with backbone unfreezing."""
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+
         logger.info(f"Starting training for {self.config.num_epochs} epochs")
-        logger.info(f"Model: {self.model.name}")
-        logger.info(f"Parameters: {self.model.count_parameters():,}")
+        logger.info(f"Model: {unwrapped_model.name}")
+        logger.info(f"Parameters: {unwrapped_model.count_parameters():,}")
         logger.info(f"Device: {self.device}")
         logger.info(f"Train samples: {len(self.train_dataset)}")
         if self.val_dataset:
             logger.info(f"Val samples: {len(self.val_dataset)}")
+        if self.config.use_wandb:
+            logger.info(f"Logging to wandb project: {self.config.wandb_project}")
 
         # Log dataset statistics
         stats = self.train_dataset.get_stats()
@@ -362,7 +375,7 @@ class LocalizationTrainer(
                 and epoch >= self.config.freeze_backbone_epochs
             ):
                 logger.info(f"Unfreezing backbone at epoch {epoch + 1}")
-                self.model.unfreeze_backbone()
+                unwrapped_model.unfreeze_backbone()
                 self._backbone_unfrozen = True
 
             # Training
@@ -395,6 +408,17 @@ class LocalizationTrainer(
             # Logging
             self._log_epoch(epoch, train_loss, val_loss, metrics)
 
+            # Log to wandb
+            wandb_metrics = {
+                "train/loss": train_loss,
+                "train/lr": self.optimizer.param_groups[0]["lr"],
+            }
+            if val_loss is not None:
+                wandb_metrics["val/loss"] = val_loss
+            for key, value in metrics.items():
+                wandb_metrics[f"val/{key}"] = value
+            self._log_to_wandb(wandb_metrics, step=epoch)
+
             # Checkpointing (use MED as primary metric, lower is better)
             metric_for_checkpoint = metrics.get(
                 "med", val_loss if val_loss else train_loss
@@ -420,9 +444,14 @@ class LocalizationTrainer(
                 break
 
         # Load best model
+        assert self.config.output_path is not None
         best_checkpoint = self.config.output_path / "best_model.pt"
         if best_checkpoint.exists():
             self._load_checkpoint(best_checkpoint)
+
+        # End wandb run
+        if self._wandb_initialized:
+            self.accelerator.end_training()
 
         return TrainingResult(
             best_epoch=self.best_epoch,
@@ -452,16 +481,22 @@ class LocalizationTrainer(
 
             with torch.no_grad():
                 for batch in self.val_loader:
-                    inputs = batch["image"].to(self.device)
+                    inputs = batch["image"]
                     level_idx = (
-                        batch["level_idx"].to(self.device)
+                        batch["level_idx"]
                         if self.config.use_level_embedding
                         else None
                     )
                     predictions = self.model(inputs, level_idx)
-                    all_predictions.append(predictions.cpu().numpy())
-                    all_targets.append(batch["coords"].numpy())
-                    all_levels.append(batch["level_idx"].numpy())
+
+                    # Gather from all processes
+                    all_preds: torch.Tensor = self.accelerator.gather(predictions)  # type: ignore[assignment]
+                    all_tgts: torch.Tensor = self.accelerator.gather(batch["coords"])  # type: ignore[assignment]
+                    all_lvls: torch.Tensor = self.accelerator.gather(batch["level_idx"])  # type: ignore[assignment]
+
+                    all_predictions.append(all_preds.cpu().numpy())
+                    all_targets.append(all_tgts.cpu().numpy())
+                    all_levels.append(all_lvls.cpu().numpy())
 
             predictions = np.concatenate(all_predictions, axis=0)
             targets = np.concatenate(all_targets, axis=0)
@@ -485,7 +520,7 @@ class LocalizationTrainer(
             )
 
         logger.info(
-            f"Visualizations saved to: {self.config.output_path / 'visualizations'}"
+            f"Visualizations saved to: {self.config.logs_path}"
         )
 
     def evaluate(
@@ -512,6 +547,7 @@ class LocalizationTrainer(
             )
 
         test_loader = self._create_dataloader(test_dataset, shuffle=False)
+        test_loader = self.accelerator.prepare(test_loader)
 
         self.model.eval()
         all_predictions = []
@@ -520,16 +556,22 @@ class LocalizationTrainer(
 
         with torch.no_grad():
             for batch in test_loader:
-                inputs = batch["image"].to(self.device)
+                inputs = batch["image"]
                 level_idx = (
-                    batch["level_idx"].to(self.device)
+                    batch["level_idx"]
                     if self.config.use_level_embedding
                     else None
                 )
                 predictions = self.model(inputs, level_idx)
-                all_predictions.append(predictions.cpu().numpy())
-                all_targets.append(batch["coords"].numpy())
-                all_levels.append(batch["level_idx"].numpy())
+
+                # Gather from all processes
+                all_preds: torch.Tensor = self.accelerator.gather(predictions)  # type: ignore[assignment]
+                all_tgts: torch.Tensor = self.accelerator.gather(batch["coords"])  # type: ignore[assignment]
+                all_lvls: torch.Tensor = self.accelerator.gather(batch["level_idx"])  # type: ignore[assignment]
+
+                all_predictions.append(all_preds.cpu().numpy())
+                all_targets.append(all_tgts.cpu().numpy())
+                all_levels.append(all_lvls.cpu().numpy())
 
         predictions = np.concatenate(all_predictions, axis=0)
         targets = np.concatenate(all_targets, axis=0)
@@ -540,5 +582,10 @@ class LocalizationTrainer(
         logger.info("Test Results:")
         for key, value in metrics.items():
             logger.info(f"  {key}: {value:.4f}")
+
+        # Log to wandb
+        if self._wandb_initialized:
+            wandb_metrics = {f"test/{key}": value for key, value in metrics.items()}
+            self._log_to_wandb(wandb_metrics)
 
         return metrics

@@ -40,9 +40,11 @@ dependencies = [
     "tyro>=0.9.35",
     "unidecode>=1.4.0",
     "vietocr>=0.3.13",
-    "wandb>=0.19.2",
     "xlrd>=2.0.2",
 ]
+
+[project.optional-dependencies]
+wandb = ["wandb>=0.19.2"]
 
 [dependency-groups]
 dev = [

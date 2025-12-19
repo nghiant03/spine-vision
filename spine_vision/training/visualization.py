@@ -5,6 +5,8 @@ Provides visualization tools for:
 - Localization predictions with ground truth overlay
 - Error distribution analysis
 - Per-level performance breakdown
+
+Supports optional wandb logging for experiment tracking.
 """
 
 from pathlib import Path
@@ -21,36 +23,50 @@ class TrainingVisualizer:
     """Visualizer for training progress and validation results.
 
     Generates interactive plots for training curves, predictions,
-    and error analysis.
+    and error analysis. Optionally logs to wandb.
     """
 
     def __init__(
         self,
         output_path: Path | None = None,
         output_mode: Literal["browser", "html", "image"] = "html",
+        use_wandb: bool = False,
     ) -> None:
         """Initialize visualizer.
 
         Args:
             output_path: Directory for saving visualizations.
             output_mode: Output format ('browser', 'html', 'image').
+            use_wandb: If True, also log visualizations to wandb.
         """
         self.output_path = output_path
         self.output_mode = output_mode
+        self.use_wandb = use_wandb
+        self._wandb: Any = None
 
         if output_path:
             output_path.mkdir(parents=True, exist_ok=True)
+
+        if use_wandb:
+            try:
+                import wandb
+                self._wandb = wandb
+            except ImportError:
+                logger.warning("wandb not installed. Disabling wandb logging.")
+                self.use_wandb = False
 
     def plot_training_curves(
         self,
         history: dict[str, list[float]],
         filename: str = "training_curves",
+        log_to_wandb: bool | None = None,
     ) -> go.Figure:
         """Plot training loss and metrics over epochs.
 
         Args:
             history: Dictionary with keys like 'train_loss', 'val_loss', 'lr', etc.
             filename: Output filename.
+            log_to_wandb: Override default wandb logging setting.
 
         Returns:
             Plotly Figure.
@@ -158,7 +174,7 @@ class TrainingVisualizer:
         )
         fig.update_xaxes(title_text="Epoch")
 
-        self._save_figure(fig, filename)
+        self._save_figure(fig, filename, log_to_wandb)
         return fig
 
     def plot_localization_predictions(
@@ -169,6 +185,7 @@ class TrainingVisualizer:
         metadata: list[dict[str, Any]] | None = None,
         num_samples: int = 16,
         filename: str = "localization_predictions",
+        log_to_wandb: bool | None = None,
     ) -> go.Figure:
         """Plot localization predictions overlaid on images.
 
@@ -179,6 +196,7 @@ class TrainingVisualizer:
             metadata: Optional list of metadata dicts per sample.
             num_samples: Maximum number of samples to show.
             filename: Output filename.
+            log_to_wandb: Override default wandb logging setting.
 
         Returns:
             Plotly Figure.
@@ -277,8 +295,62 @@ class TrainingVisualizer:
             width=250 * n_cols,
         )
 
-        self._save_figure(fig, filename)
+        self._save_figure(fig, filename, log_to_wandb)
+
+        # Also log individual images to wandb if enabled
+        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
+            self._log_prediction_images_to_wandb(
+                images[:n_samples],
+                predictions[:n_samples],
+                targets[:n_samples],
+                metadata[:n_samples] if metadata else None,
+            )
+
         return fig
+
+    def _log_prediction_images_to_wandb(
+        self,
+        images: list[np.ndarray],
+        predictions: np.ndarray,
+        targets: np.ndarray,
+        metadata: list[dict[str, Any]] | None = None,
+    ) -> None:
+        """Log prediction images to wandb."""
+        if self._wandb is None:
+            return
+
+        wandb_images = []
+        for i, img in enumerate(images):
+            h, w = img.shape[:2]
+            pred_x, pred_y = predictions[i] * [w, h]
+            gt_x, gt_y = targets[i] * [w, h]
+
+            caption = ""
+            if metadata and i < len(metadata):
+                caption = metadata[i].get("level", "")
+
+            # Create wandb image with bounding boxes
+            boxes = [
+                {
+                    "position": {"middle": [float(gt_x), float(gt_y)], "width": 10, "height": 10},
+                    "class_id": 0,
+                    "box_caption": "GT",
+                },
+                {
+                    "position": {"middle": [float(pred_x), float(pred_y)], "width": 10, "height": 10},
+                    "class_id": 1,
+                    "box_caption": "Pred",
+                },
+            ]
+
+            wandb_img = self._wandb.Image(
+                img,
+                caption=caption,
+                boxes={"predictions": {"box_data": boxes, "class_labels": {0: "GT", 1: "Pred"}}},
+            )
+            wandb_images.append(wandb_img)
+
+        self._wandb.log({"predictions": wandb_images})
 
     def plot_error_distribution(
         self,
@@ -287,6 +359,7 @@ class TrainingVisualizer:
         levels: np.ndarray | None = None,
         level_names: list[str] | None = None,
         filename: str = "error_distribution",
+        log_to_wandb: bool | None = None,
     ) -> go.Figure:
         """Plot error distribution analysis.
 
@@ -296,6 +369,7 @@ class TrainingVisualizer:
             levels: Optional level indices [N].
             level_names: Names for each level.
             filename: Output filename.
+            log_to_wandb: Override default wandb logging setting.
 
         Returns:
             Plotly Figure.
@@ -407,7 +481,17 @@ class TrainingVisualizer:
             showlegend=True,
         )
 
-        self._save_figure(fig, filename)
+        self._save_figure(fig, filename, log_to_wandb)
+
+        # Log summary stats to wandb
+        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
+            self._wandb.log({
+                "error/mean_distance": float(np.mean(distances)),
+                "error/std_distance": float(np.std(distances)),
+                "error/median_distance": float(np.median(distances)),
+                "error/max_distance": float(np.max(distances)),
+            })
+
         return fig
 
     def plot_per_level_metrics(
@@ -416,6 +500,7 @@ class TrainingVisualizer:
         level_names: list[str],
         metric_prefix: str = "med_",
         filename: str = "per_level_metrics",
+        log_to_wandb: bool | None = None,
     ) -> go.Figure:
         """Plot per-level metric comparison.
 
@@ -424,6 +509,7 @@ class TrainingVisualizer:
             level_names: Names of levels.
             metric_prefix: Prefix for per-level metrics in dict.
             filename: Output filename.
+            log_to_wandb: Override default wandb logging setting.
 
         Returns:
             Plotly Figure.
@@ -465,7 +551,15 @@ class TrainingVisualizer:
             height=400,
         )
 
-        self._save_figure(fig, filename)
+        self._save_figure(fig, filename, log_to_wandb)
+
+        # Log per-level metrics to wandb
+        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
+            wandb_metrics = {f"per_level/{label}": val for label, val in zip(labels, values)}
+            if values:
+                wandb_metrics["per_level/average"] = float(np.mean(values))
+            self._wandb.log(wandb_metrics)
+
         return fig
 
     def visualize_sample(
@@ -475,6 +569,7 @@ class TrainingVisualizer:
         target: np.ndarray,
         level: str = "",
         filename: str = "sample",
+        log_to_wandb: bool | None = None,
     ) -> go.Figure:
         """Visualize a single sample with prediction overlay.
 
@@ -484,6 +579,7 @@ class TrainingVisualizer:
             target: Ground truth coordinates [2] in relative [0, 1].
             level: Level label for title.
             filename: Output filename.
+            log_to_wandb: Override default wandb logging setting.
 
         Returns:
             Plotly Figure.
@@ -552,10 +648,40 @@ class TrainingVisualizer:
             width=500,
         )
 
-        self._save_figure(fig, filename)
+        self._save_figure(fig, filename, log_to_wandb)
         return fig
 
-    def _save_figure(self, fig: go.Figure, filename: str) -> None:
+    def log_table(
+        self,
+        data: dict[str, list[Any]],
+        table_name: str = "results",
+    ) -> None:
+        """Log a table to wandb.
+
+        Args:
+            data: Dictionary where keys are column names and values are column data.
+            table_name: Name for the wandb table.
+        """
+        if self._wandb is not None and self.use_wandb:
+            table = self._wandb.Table(columns=list(data.keys()))
+            n_rows = len(next(iter(data.values())))
+            for i in range(n_rows):
+                row = [data[col][i] for col in data.keys()]
+                table.add_data(*row)
+            self._wandb.log({table_name: table})
+
+    def _should_log_to_wandb(self, override: bool | None) -> bool:
+        """Determine if should log to wandb."""
+        if override is not None:
+            return override and self._wandb is not None
+        return self.use_wandb and self._wandb is not None
+
+    def _save_figure(
+        self,
+        fig: go.Figure,
+        filename: str,
+        log_to_wandb: bool | None = None,
+    ) -> None:
         """Save figure according to output mode."""
         if self.output_mode == "browser":
             fig.show()
@@ -572,3 +698,7 @@ class TrainingVisualizer:
                 logger.warning(f"Failed to save image: {e}. Falling back to HTML.")
                 path = self.output_path / f"{filename}.html"
                 fig.write_html(path)
+
+        # Log to wandb if enabled
+        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
+            self._wandb.log({filename: fig})

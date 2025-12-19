@@ -42,3 +42,4 @@ def setup_logger(
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} | {message}",
             encoding="utf-8",
         )
+        logger.info(f"Logging to {log_path}")

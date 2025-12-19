@@ -1,5 +1,7 @@
 """Training CLI command configuration and entry point."""
 
+from typing import Annotated
+
 import tyro
 from loguru import logger
 
@@ -16,7 +18,7 @@ def main(config: LocalizationConfig) -> None:
     Args:
         config: Training configuration.
     """
-    setup_logger(verbose=config.verbose)
+    setup_logger(verbose=config.verbose, enable_file_log=config.enable_file_log)
 
     logger.info("=" * 50)
     logger.info("Starting Localization Training")
@@ -28,6 +30,10 @@ def main(config: LocalizationConfig) -> None:
     logger.info(f"Learning rate: {config.learning_rate}")
     logger.info(f"Epochs: {config.num_epochs}")
     logger.info(f"Device: {config.device}")
+    if config.use_wandb:
+        logger.info(f"Wandb project: {config.wandb_project}")
+        if config.wandb_run_name:
+            logger.info(f"Wandb run name: {config.wandb_run_name}")
 
     # Create trainer and run
     trainer = LocalizationTrainer(config)

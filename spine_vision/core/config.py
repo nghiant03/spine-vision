@@ -14,5 +14,4 @@ class BaseConfig(BaseModel):
     enable_file_log: bool = False
     log_path: Path = Path.cwd() / "logs"
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = {"arbitrary_types_allowed": True}

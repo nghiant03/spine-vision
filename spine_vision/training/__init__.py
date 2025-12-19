@@ -5,10 +5,13 @@ This module provides extensible training infrastructure for various tasks:
 - Classification
 - Segmentation
 
+Uses HuggingFace Accelerate for distributed training and mixed precision,
+with optional wandb logging for experiment tracking.
+
 Exports:
     - Base classes: BaseTrainer, BaseModel, TrainingConfig
     - Datasets: IVDCoordsDataset
-    - Models: ConvNextLocalization
+    - Models: ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization
     - Trainers: LocalizationTrainer, LocalizationConfig
     - Metrics: LocalizationMetrics
     - Visualization: TrainingVisualizer
@@ -22,7 +25,11 @@ from spine_vision.training.base import (
 )
 from spine_vision.training.datasets import IVDCoordsDataset
 from spine_vision.training.metrics import LocalizationMetrics
-from spine_vision.training.models import ConvNextLocalization
+from spine_vision.training.models import (
+    ConvNextClassifier,
+    ConvNextLocalization,
+    VisionTransformerLocalization,
+)
 from spine_vision.training.trainers import LocalizationConfig, LocalizationTrainer
 from spine_vision.training.visualization import TrainingVisualizer
 
@@ -36,6 +43,8 @@ __all__ = [
     "IVDCoordsDataset",
     # Models
     "ConvNextLocalization",
+    "ConvNextClassifier",
+    "VisionTransformerLocalization",
     # Trainers
     "LocalizationConfig",
     "LocalizationTrainer",
