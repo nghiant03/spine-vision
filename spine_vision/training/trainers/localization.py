@@ -336,13 +336,7 @@ class LocalizationTrainer(
                 f"Backbone frozen for first {self.config.freeze_backbone_epochs} epochs"
             )
 
-        result = self._train_loop()
-
-        # Generate final visualizations (only on main process)
-        if self.accelerator.is_main_process:
-            self._generate_final_visualizations()
-
-        return result
+        return self._train_loop()
 
     def _train_loop(self) -> TrainingResult:
         """Main training loop with backbone unfreezing."""
@@ -447,6 +441,10 @@ class LocalizationTrainer(
         best_checkpoint = self.config.output_path / "best_model.pt"
         if best_checkpoint.exists():
             self._load_checkpoint(best_checkpoint)
+
+        # Generate final visualizations (before ending wandb)
+        if self.accelerator.is_main_process:
+            self._generate_final_visualizations()
 
         # End wandb run
         if self._wandb_initialized:
