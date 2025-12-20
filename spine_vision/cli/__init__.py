@@ -5,6 +5,7 @@ Usage:
     spine-vision dataset ivd-coords [OPTIONS]  # Create IVD coordinates dataset
     spine-vision dataset phenikaa [OPTIONS]    # Preprocess Phenikaa dataset
     spine-vision train localization [OPTIONS]  # Train localization model
+    spine-vision test [OPTIONS]                # Test trained models
     spine-vision visualize [OPTIONS]           # Visualize segmentation results
 """
 
@@ -13,6 +14,8 @@ from typing import Annotated, Union
 
 import tyro
 
+from spine_vision.cli.test import TestConfig
+from spine_vision.cli.test import main as test_main
 from spine_vision.cli.train import main as train_main
 from spine_vision.cli.visualize import VisualizeConfig
 from spine_vision.cli.visualize import main as visualize_main
@@ -94,6 +97,10 @@ Command = Union[
         tyro.conf.subcommand("train", description="Model training"),
     ],
     Annotated[
+        TestConfig,
+        tyro.conf.subcommand("test", description="Test trained models with images or DICOM"),
+    ],
+    Annotated[
         VisualizeConfig,
         tyro.conf.subcommand("visualize", description="Visualize segmentation results"),
     ],
@@ -117,6 +124,8 @@ def cli() -> None:
             match cmd:
                 case LocalizationConfig():
                     train_main(cmd)
+        case TestConfig():
+            test_main(config)
         case VisualizeConfig():
             visualize_main(config)
 

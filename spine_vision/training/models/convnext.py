@@ -8,7 +8,7 @@ model variants and pretrained weights.
 """
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 
 import numpy as np
 import timm
@@ -200,7 +200,7 @@ class ConvNextLocalization(BaseModel):
 
     def test_inference(
         self,
-        images: list[str | Path | Image.Image | np.ndarray],
+        images: Sequence[str | Path | Image.Image | np.ndarray],
         image_size: tuple[int, int] = (224, 224),
         device: str | torch.device | None = None,
         level_indices: list[int] | None = None,
@@ -395,7 +395,7 @@ class ConvNextClassifier(BaseModel):
 
     def test_inference(
         self,
-        images: list[str | Path | Image.Image | np.ndarray],
+        images: Sequence[str | Path | Image.Image | np.ndarray],
         image_size: tuple[int, int] = (224, 224),
         device: str | torch.device | None = None,
         return_probabilities: bool = True,

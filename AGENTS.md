@@ -43,6 +43,7 @@ spine-vision dataset nnunet [OPTIONS]     # Convert datasets to nnU-Net format
 spine-vision dataset ivd-coords [OPTIONS] # Create IVD coordinates dataset
 spine-vision dataset phenikaa [OPTIONS]   # Preprocess Phenikaa dataset (OCR + matching)
 spine-vision train localization [OPTIONS] # Train localization model (ConvNext)
+spine-vision test [OPTIONS]               # Test trained models with images/DICOM
 spine-vision visualize [OPTIONS]          # Visualize segmentation with inference
 ```
 
@@ -386,6 +387,24 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | `--run-id` | Unique run identifier | Auto-generated |
 | `--wandb-run-name` | Wandb run name | Same as run_id |
 | `--wandb-tags` | Wandb tags (e.g., `exp1 baseline`) | None |
+| `-v, --verbose` | Debug logging | `False` |
+
+### spine-vision test
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--model-path` | Path to trained model checkpoint (.pt file) | Required |
+| `--inputs` | Input image or DICOM file paths | Required |
+| `--task` | Task type (`localization`, `classification`) | `localization` |
+| `--model-variant` | ConvNext variant | `base` |
+| `--level-indices` | IVD level indices (0-4) for localization | None |
+| `--num-levels` | Number of IVD levels model was trained on | `5` |
+| `--use-level-embedding` | Whether model uses level embedding | `True` |
+| `--num-classes` | Number of classes for classification | `4` |
+| `--class-names` | Optional class names for output | None |
+| `--image-size` | Target image size (H W) | `224 224` |
+| `--device` | Inference device | `cuda:0` |
+| `--output-path` | Path to save results (JSON) | None |
+| `--visualize` | Generate prediction visualizations | `False` |
 | `-v, --verbose` | Debug logging | `False` |
 
 ## Adding New Components

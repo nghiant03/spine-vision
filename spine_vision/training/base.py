@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, Sequence, TypeVar
 
 import numpy as np
 import torch
@@ -259,7 +259,7 @@ class BaseModel(nn.Module, ABC):
 
     def test_inference(
         self,
-        images: list[str | Path | Image.Image | np.ndarray],
+        images: Sequence[str | Path | Image.Image | np.ndarray],
         image_size: tuple[int, int] = (224, 224),
         device: str | torch.device | None = None,
     ) -> dict[str, Any]:
