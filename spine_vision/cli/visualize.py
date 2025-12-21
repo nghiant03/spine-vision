@@ -21,7 +21,7 @@ from spine_vision.visualization.plotly_viewer import PlotlyViewer
 class VisualizeConfig(BaseModel):
     """Configuration for visualization."""
 
-    input_path: Path = Path.cwd() / "data/gold/classification/images/250029976/SAG T1"
+    input_path: Path = Path.cwd() / "data/processed/classification/images/250029976/SAG T1"
     output_path: Path = Path.cwd() / "results/segmentation"
     model_path: Path = (
         Path.cwd()

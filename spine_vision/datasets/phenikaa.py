@@ -25,7 +25,7 @@ ONE_HOT_COL = "Modic"
 class PreprocessConfig(BaseModel):
     """Configuration for preprocessing pipeline."""
 
-    data_path: Path = Path.cwd() / "data/silver/Phenikaa"
+    data_path: Path = Path.cwd() / "data/raw/Phenikaa"
     exclude_files: list[str] = []
     id_col: str = "Patient ID"
     corrupted_ids: list[int] = [
@@ -36,7 +36,7 @@ class PreprocessConfig(BaseModel):
         250026665,
         250010269,
     ]
-    output_path: Path = Path.cwd() / "data/gold/classification"
+    output_path: Path = Path.cwd() / "data/processed/classification"
     output_table: str = "radiological_labels.csv"
     model_path: Path = Path.cwd() / "weights/ocr"
     detection_model: str = "PP-OCRv5_server_det"

@@ -39,7 +39,7 @@ spine-vision dataset nnunet --input-path data/raw/SPIDER --output-path data/nnun
 spine-vision dataset ivd-coords --base-path data
 
 # Preprocess Phenikaa dataset (OCR + patient matching)
-spine-vision dataset phenikaa --data-path data/silver/Phenikaa
+spine-vision dataset phenikaa --data-path data/raw/Phenikaa
 
 # Visualize segmentation results
 spine-vision visualize --input-path data/images --output-mode html
@@ -78,7 +78,7 @@ Convert datasets to nnU-Net format.
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--input-path` | Source dataset directory | `data/raw/SPIDER` |
-| `--output-path` | nnU-Net output directory | `data/silver/SPIDER/Dataset501_Spider` |
+| `--output-path` | nnU-Net output directory | `data/processed/SPIDER/Dataset501_Spider` |
 | `--schema-path` | Label schema YAML | Built-in `spider` |
 | `--channel-name` | Channel name in dataset.json | `MRI` |
 | `--file-extension` | Input file extension | `.mha` |
@@ -103,8 +103,8 @@ Preprocess Phenikaa dataset with OCR and patient matching.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--data-path` | Input data directory | `data/silver/Phenikaa` |
-| `--output-path` | Output directory | `data/gold/classification` |
+| `--data-path` | Input data directory | `data/raw/Phenikaa` |
+| `--output-path` | Output directory | `data/processed/classification` |
 | `-g, --use-gpu` | Enable GPU acceleration | `True` |
 | `--report-fuzzy-threshold` | OCR matching threshold | `80` |
 | `--image-fuzzy-threshold` | Folder matching threshold | `85` |

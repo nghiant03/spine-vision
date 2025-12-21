@@ -1,12 +1,14 @@
 """Unified CLI for spine-vision.
 
 Usage:
-    spine-vision dataset nnunet [OPTIONS]      # Convert to nnUNet format
-    spine-vision dataset ivd-coords [OPTIONS]  # Create IVD coordinates dataset
-    spine-vision dataset phenikaa [OPTIONS]    # Preprocess Phenikaa dataset
-    spine-vision train localization [OPTIONS]  # Train localization model
-    spine-vision test [OPTIONS]                # Test trained models
-    spine-vision visualize [OPTIONS]           # Visualize segmentation results
+    spine-vision dataset nnunet [OPTIONS]          # Convert to nnUNet format
+    spine-vision dataset localization [OPTIONS]    # Create localization dataset
+    spine-vision dataset phenikaa [OPTIONS]        # Preprocess Phenikaa dataset
+    spine-vision dataset classification [OPTIONS]  # Create classification dataset
+    spine-vision train localization [OPTIONS]      # Train localization model
+    spine-vision train classification [OPTIONS]    # Train classification model (MTL)
+    spine-vision test [OPTIONS]                    # Test trained models
+    spine-vision visualize [OPTIONS]               # Visualize segmentation results
 """
 
 import dataclasses
@@ -19,12 +21,15 @@ from spine_vision.cli.test import main as test_main
 from spine_vision.cli.train import main as train_main
 from spine_vision.cli.visualize import VisualizeConfig
 from spine_vision.cli.visualize import main as visualize_main
+from spine_vision.datasets.classification import ClassificationDatasetConfig
+from spine_vision.datasets.classification import main as classification_main
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig
 from spine_vision.datasets.ivd_coords import main as ivd_coords_main
 from spine_vision.datasets.nnunet import ConvertConfig
 from spine_vision.datasets.nnunet import main as nnunet_main
 from spine_vision.datasets.phenikaa import PreprocessConfig
 from spine_vision.datasets.phenikaa import main as phenikaa_main
+from spine_vision.training.trainers.classification import ClassificationConfig
 from spine_vision.training.trainers.localization import LocalizationConfig
 
 DatasetSubcommand = Annotated[
@@ -40,9 +45,9 @@ DatasetSubcommand = Annotated[
         Annotated[
             IVDDatasetConfig,
             tyro.conf.subcommand(
-                "ivd-coords",
+                "localization",
                 prefix_name=False,
-                description="Create IVD coordinates dataset",
+                description="Create localization dataset (IVD coordinates)",
             ),
         ],
         Annotated[
@@ -51,6 +56,14 @@ DatasetSubcommand = Annotated[
                 "phenikaa",
                 prefix_name=False,
                 description="Preprocess Phenikaa dataset (OCR + matching)",
+            ),
+        ],
+        Annotated[
+            ClassificationDatasetConfig,
+            tyro.conf.subcommand(
+                "classification",
+                prefix_name=False,
+                description="Create classification dataset (Phenikaa + SPIDER)",
             ),
         ],
     ],
@@ -66,6 +79,14 @@ TrainSubcommand = Annotated[
                 "localization",
                 prefix_name=False,
                 description="Train localization model (ConvNext)",
+            ),
+        ],
+        Annotated[
+            ClassificationConfig,
+            tyro.conf.subcommand(
+                "classification",
+                prefix_name=False,
+                description="Train classification model (ResNet50-MTL)",
             ),
         ],
     ],
@@ -120,9 +141,13 @@ def cli() -> None:
                     ivd_coords_main(cmd)
                 case PreprocessConfig():
                     phenikaa_main(cmd)
+                case ClassificationDatasetConfig():
+                    classification_main(cmd)
         case TrainCommand(cmd=cmd):
             match cmd:
                 case LocalizationConfig():
+                    train_main(cmd)
+                case ClassificationConfig():
                     train_main(cmd)
         case TestConfig():
             test_main(config)

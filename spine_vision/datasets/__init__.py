@@ -4,9 +4,12 @@ This module provides classes and functions for creating and converting datasets:
 - nnunet: Convert datasets to nnU-Net format
 - ivd_coords: Create IVD coordinates dataset
 - phenikaa: Preprocess Phenikaa dataset (OCR + matching)
+- classification: Create classification dataset (Phenikaa + SPIDER)
 - rsna: RSNA dataset utilities
 """
 
+from spine_vision.datasets.classification import ClassificationDatasetConfig
+from spine_vision.datasets.classification import main as create_classification_dataset
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig
 from spine_vision.datasets.ivd_coords import main as create_ivd_dataset
 from spine_vision.datasets.nnunet import ConvertConfig
@@ -22,6 +25,8 @@ __all__ = [
     "create_ivd_dataset",
     "PreprocessConfig",
     "preprocess_phenikaa",
+    "ClassificationDatasetConfig",
+    "create_classification_dataset",
     "load_series_mapping",
     "get_series_type",
 ]

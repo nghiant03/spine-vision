@@ -25,7 +25,7 @@ class ConvertConfig(BaseModel):
     """Configuration for dataset conversion."""
 
     input_path: Path = Path.cwd() / "data/raw/SPIDER"
-    output_path: Path = Path.cwd() / "data/silver/SPIDER/Dataset501_Spider"
+    output_path: Path = Path.cwd() / "data/processed/SPIDER/Dataset501_Spider"
     schema_path: Path | None = None
     dataset_name: str = "Spider"
     channel_name: str = "MRI"

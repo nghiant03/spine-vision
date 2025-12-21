@@ -65,7 +65,7 @@ class IVDDatasetConfig(BaseModel):
     @property
     def output_path(self) -> Path:
         """Output dataset path."""
-        return self.base_path / "gold" / self.output_name
+        return self.base_path / "processed" / self.output_name
 
 
 class AnnotationRecord(BaseModel):

@@ -39,12 +39,13 @@ uv sync --group dev        # Include dev dependencies (pandas-stubs, plotly-stub
 
 ### CLI Entry Points (after install)
 ```bash
-spine-vision dataset nnunet [OPTIONS]     # Convert datasets to nnU-Net format
-spine-vision dataset ivd-coords [OPTIONS] # Create IVD coordinates dataset
-spine-vision dataset phenikaa [OPTIONS]   # Preprocess Phenikaa dataset (OCR + matching)
-spine-vision train localization [OPTIONS] # Train localization model (ConvNext)
-spine-vision test [OPTIONS]               # Test trained models with images/DICOM
-spine-vision visualize [OPTIONS]          # Visualize segmentation with inference
+spine-vision dataset nnunet [OPTIONS]          # Convert datasets to nnU-Net format
+spine-vision dataset localization [OPTIONS]    # Create localization dataset
+spine-vision dataset phenikaa [OPTIONS]        # Preprocess Phenikaa dataset (OCR + matching)
+spine-vision dataset classification [OPTIONS]  # Create classification dataset (Phenikaa + SPIDER)
+spine-vision train localization [OPTIONS]      # Train localization model (ConvNext)
+spine-vision test [OPTIONS]                    # Test trained models with images/DICOM
+spine-vision visualize [OPTIONS]               # Visualize segmentation with inference
 ```
 
 ### Running Scripts Directly
@@ -96,6 +97,7 @@ spine-vision/
 │   │   ├── __init__.py
 │   │   ├── nnunet.py          # nnUNet format conversion
 │   │   ├── ivd_coords.py      # IVD coordinates dataset creation
+│   │   ├── classification.py  # Classification dataset (Phenikaa + SPIDER)
 │   │   ├── phenikaa.py        # Phenikaa preprocessing (OCR + matching)
 │   │   ├── rsna.py            # RSNA dataset utilities (series mapping)
 │   │   └── schemas/           # YAML label definitions
@@ -213,6 +215,7 @@ remapped = remap_labels(mask_array, schema.mapping)
 from spine_vision.datasets.nnunet import ConvertConfig, main as convert_main
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig, main as ivd_main
 from spine_vision.datasets.phenikaa import PreprocessConfig, main as preprocess_main
+from spine_vision.datasets.classification import ClassificationDatasetConfig, main as classification_main
 from spine_vision.datasets import load_series_mapping, get_series_type
 
 # nnUNet conversion
@@ -224,8 +227,16 @@ config = IVDDatasetConfig(base_path=Path("data"))
 ivd_main(config)
 
 # Phenikaa preprocessing
-config = PreprocessConfig(data_path=Path("data/silver/Phenikaa"))
+config = PreprocessConfig(data_path=Path("data/raw/Phenikaa"))
 preprocess_main(config)
+
+# Classification dataset (Phenikaa + SPIDER with IVD cropping)
+config = ClassificationDatasetConfig(
+    base_path=Path("data"),
+    localization_model_path=Path("weights/localization/model.pt"),
+    crop_size=(64, 64),
+)
+classification_main(config)
 
 # RSNA series mapping
 series_mapping = load_series_mapping(Path("train_series_descriptions.csv"))
@@ -246,12 +257,14 @@ viewer.visualize_batch(images, masks)  # Batch processing
 from spine_vision.training import (
     # Base classes
     BaseModel, BaseTrainer, TrainingConfig, TrainingResult,
-    # Dataset
-    IVDCoordsDataset,
+    # Datasets
+    IVDCoordsDataset, ClassificationDataset, CropOnlyDataset,
     # Models (via timm)
     ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization,
+    ResNet50MTL, MTLPredictions, MTLTargets,
     # Trainers
     LocalizationConfig, LocalizationTrainer,
+    ClassificationConfig, ClassificationTrainer, MTLClassificationMetrics,
     # Metrics & Visualization
     LocalizationMetrics, TrainingVisualizer,
 )
@@ -262,7 +275,7 @@ from spine_vision.training import (
 #   - config.yaml (saved automatically)
 #   - logs/ (training_curves.html, predictions_epoch_N.html, etc.)
 config = LocalizationConfig(
-    data_path=Path("data/gold/ivd_coords"),
+    data_path=Path("data/processed/ivd_coords"),
     # output_path auto-generated: weights/localization/<run_id>
     # run_id auto-generated if not provided
     model_variant="base",  # tiny, small, base, large, xlarge, v2_tiny, v2_small, v2_base, v2_large, v2_huge
@@ -279,13 +292,44 @@ result = trainer.train()
 # Evaluate on test set
 test_metrics = trainer.evaluate()
 
-# Create custom dataset
+# Training MTL classification model (ResNet50 with 6 heads)
+# Predicts 13 clinical labels per disc:
+#   - Pfirrmann grade (5 classes)
+#   - Modic type (4 classes)  
+#   - Herniation + Bulging (2 binary)
+#   - Upper/Lower Endplate (2 binary)
+#   - Spondylolisthesis (1 binary)
+#   - Narrowing (1 binary)
+config = ClassificationConfig(
+    data_path=Path("data/processed/classification"),
+    crop_size=128,  # Size to crop from original DICOM
+    output_size=(224, 224),  # Final input to model
+    use_preextracted_crops=False,  # Set True if using CropOnlyDataset
+    batch_size=32,
+    num_epochs=100,
+    learning_rate=1e-4,
+    use_wandb=True,
+)
+trainer = ClassificationTrainer(config)
+result = trainer.train()
+
+# Create custom localization dataset
 dataset = IVDCoordsDataset(
-    data_path=Path("data/gold/ivd_coords"),
+    data_path=Path("data/processed/ivd_coords"),
     split="train",
     series_types=["sag_t1", "sag_t2"],
     image_size=(224, 224),
     augment=True,
+)
+
+# Create classification dataset with dual-modality cropping
+# Loads T1+T2 crops from DICOM based on localization coordinates
+dataset = ClassificationDataset(
+    data_path=Path("data/processed/classification"),
+    split="train",
+    localization_size=(224, 224),  # Size used by localizer
+    crop_size=128,  # Crop size from original image
+    output_size=(224, 224),  # Final resize
 )
 
 # Test model inference with images
@@ -300,6 +344,23 @@ result = model.test_inference(
 print(result["predictions"])  # Predicted coordinates [N, 2]
 print(result["coords_pixel"])  # Coordinates in pixel space
 print(result["inference_time_ms"])  # Inference time
+
+# Test MTL classification model
+mtl_model = ResNet50MTL(pretrained=True)
+mtl_model.load_state_dict(torch.load("best_model.pt")["model_state_dict"])
+result = mtl_model.test_inference(
+    images=["crop1.png", "crop2.png"],
+    image_size=(224, 224),
+    device="cuda:0",
+)
+print(result["predictions"]["pfirrmann"])  # Grades 1-5
+print(result["predictions"]["modic"])  # Types 0-3
+print(result["predictions"]["herniation"])  # [B, 2] binary
+
+# Generate CSV output for competition
+predictions = mtl_model.predict(batch)
+csv_row = mtl_model.to_csv_row(predictions, patient_id="P001", ivd_level=4)
+header = ResNet50MTL.get_csv_header()
 
 # Metrics computation
 metrics = LocalizationMetrics(pck_thresholds=[0.02, 0.05, 0.10])
@@ -320,8 +381,8 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 ### spine-vision dataset phenikaa
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--data-path` | Input data directory | `data/silver/Phenikaa` |
-| `--output-path` | Output directory | `data/gold/classification` |
+| `--data-path` | Input data directory | `data/raw/Phenikaa` |
+| `--output-path` | Output directory | `data/processed/classification` |
 | `-g, --use-gpu` | Enable GPU acceleration | `True` |
 | `-v, --verbose` | Debug logging | `False` |
 | `--enable-file-log` | Write logs to file | `False` |
@@ -332,13 +393,13 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--input-path` | Source dataset directory | `data/raw/SPIDER` |
-| `--output-path` | nnUNet output directory | `data/silver/SPIDER/Dataset501_Spider` |
+| `--output-path` | nnUNet output directory | `data/processed/SPIDER/Dataset501_Spider` |
 | `--schema-path` | Label schema YAML (optional) | Built-in `spider` |
 | `--channel-name` | Channel name in dataset.json | `MRI` |
 | `--file-extension` | Input file extension | `.mha` |
 | `-v, --verbose` | Debug logging | `False` |
 
-### spine-vision dataset ivd-coords
+### spine-vision dataset localization
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--base-path` | Base data directory | `data` |
@@ -348,10 +409,26 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | `--skip-invalid-instances` | Skip records with invalid instance numbers | `True` |
 | `-v, --verbose` | Debug logging | `False` |
 
+### spine-vision dataset classification
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--base-path` | Base data directory | `data` |
+| `--output-name` | Output dataset folder name | `classification` |
+| `--localization-model-path` | Path to trained localization model (optional) | None |
+| `--model-variant` | ConvNext variant for localization | `base` |
+| `--crop-size` | Output size of cropped IVD regions in pixels (H W) | `224 224` |
+| `--crop-size-mm` | Symmetric crop region size in millimeters (H W) | `50.0 50.0` |
+| `--crop-delta-mm` | Custom asymmetric crop region deltas (left right top bottom) from center in mm | None |
+| `--image-size` | Input image size for localization model (H W) | `224 224` |
+| `--include-phenikaa` | Include Phenikaa dataset | `True` |
+| `--include-spider` | Include SPIDER dataset | `True` |
+| `--device` | Device for model inference | `cuda:0` |
+| `-v, --verbose` | Debug logging | `False` |
+
 ### spine-vision visualize
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--input-path` | DICOM input directory | `data/gold/classification/images/...` |
+| `--input-path` | DICOM input directory | `data/processed/classification/images/...` |
 | `--output-path` | Output directory | `results/segmentation` |
 | `--model-path` | nnUNet model path | `weights/segmentation/...` |
 | `--dataset-id` | nnUNet dataset ID | `501` |
@@ -364,7 +441,7 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 ### spine-vision train localization
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--data-path` | IVD coordinates dataset path | `data/gold/ivd_coords` |
+| `--data-path` | IVD coordinates dataset path | `data/processed/ivd_coords` |
 | `--output-path` | Training output directory | `weights/<task>/<run_id>` |
 | `--model-variant` | ConvNext variant (`tiny`, `small`, `base`, `large`, `xlarge`, `v2_tiny`, `v2_small`, `v2_base`, `v2_large`, `v2_huge`) | `base` |
 | `--batch-size` | Training batch size | `32` |
@@ -394,9 +471,10 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 |------|-------------|---------|
 | `--model-path` | Path to trained model checkpoint (.pt file) | Required |
 | `--inputs` | Input image or DICOM file paths | Required |
-| `--task` | Task type (`localization`, `classification`) | `localization` |
-| `--model-variant` | ConvNext variant | `base` |
-| `--level-indices` | IVD level indices (0-4) for localization | None |
+| `--task` | Task type (`localization`, `classification`, `mtl_classification`) | `localization` |
+| `--model-variant` | ConvNext variant (for localization/classification) | `base` |
+| `--level-indices` | IVD level indices (0-4) for localization (if not provided, tests all levels) | None |
+| `--test-all-levels` | When level_indices is None, test all 5 levels per image | `True` |
 | `--num-levels` | Number of IVD levels model was trained on | `5` |
 | `--use-level-embedding` | Whether model uses level embedding | `True` |
 | `--num-classes` | Number of classes for classification | `4` |
@@ -405,6 +483,32 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | `--device` | Inference device | `cuda:0` |
 | `--output-path` | Path to save results (JSON) | None |
 | `--visualize` | Generate prediction visualizations | `False` |
+| `-v, --verbose` | Debug logging | `False` |
+
+### spine-vision train classification
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--data-path` | Classification dataset path | `data/processed/classification` |
+| `--output-path` | Training output directory | `weights/classification/<run_id>` |
+| `--use-preextracted-crops` | Use CropOnlyDataset with pre-extracted crops | `False` |
+| `--crop-size` | Size of crop from original image (pixels) | `128` |
+| `--output-size` | Final input size to model (H W) | `224 224` |
+| `--localization-size` | Size used by localization model (H W) | `224 224` |
+| `--t1-subdir` | Subdirectory for T1 images | `sag_t1` |
+| `--t2-subdir` | Subdirectory for T2 images | `sag_t2` |
+| `--levels` | Filter IVD levels (e.g., `L4/L5 L5/S1`) | None |
+| `--dropout` | Dropout rate | `0.3` |
+| `--freeze-backbone-epochs` | Epochs to freeze backbone | `0` |
+| `--label-smoothing` | Label smoothing for cross-entropy | `0.1` |
+| `--batch-size` | Training batch size | `32` |
+| `--num-epochs` | Number of training epochs | `100` |
+| `--learning-rate` | Learning rate | `1e-4` |
+| `--augment` | Enable data augmentation | `True` |
+| `--mixed-precision` | Use mixed precision training | `True` |
+| `--early-stopping` | Enable early stopping | `True` |
+| `--patience` | Early stopping patience | `20` |
+| `--use-wandb` | Enable wandb logging | `False` |
+| `--wandb-project` | Wandb project name | `spine-vision` |
 | `-v, --verbose` | Debug logging | `False` |
 
 ## Adding New Components
