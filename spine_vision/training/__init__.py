@@ -2,7 +2,7 @@
 
 This module provides extensible training infrastructure for various tasks:
 - Localization (landmark detection, coordinate regression)
-- Classification
+- Classification (multi-task lumbar spine grading)
 - Segmentation
 
 Uses HuggingFace Accelerate for distributed training and mixed precision,
@@ -10,10 +10,10 @@ with optional wandb logging for experiment tracking.
 
 Exports:
     - Base classes: BaseTrainer, BaseModel, TrainingConfig
-    - Datasets: IVDCoordsDataset
-    - Models: ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization
-    - Trainers: LocalizationTrainer, LocalizationConfig
-    - Metrics: LocalizationMetrics
+    - Datasets: IVDCoordsDataset, ClassificationDataset, CropOnlyDataset
+    - Models: ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization, ResNet50MTL
+    - Trainers: LocalizationTrainer, LocalizationConfig, ClassificationTrainer, ClassificationConfig
+    - Metrics: LocalizationMetrics, MTLClassificationMetrics
     - Visualization: TrainingVisualizer
 """
 
@@ -23,14 +23,27 @@ from spine_vision.training.base import (
     TrainingConfig,
     TrainingResult,
 )
-from spine_vision.training.datasets import IVDCoordsDataset
+from spine_vision.training.datasets import (
+    ClassificationDataset,
+    CropOnlyDataset,
+    IVDCoordsDataset,
+)
 from spine_vision.training.metrics import LocalizationMetrics
 from spine_vision.training.models import (
     ConvNextClassifier,
     ConvNextLocalization,
+    MTLPredictions,
+    MTLTargets,
+    ResNet50MTL,
     VisionTransformerLocalization,
 )
-from spine_vision.training.trainers import LocalizationConfig, LocalizationTrainer
+from spine_vision.training.trainers import (
+    ClassificationConfig,
+    ClassificationTrainer,
+    LocalizationConfig,
+    LocalizationTrainer,
+    MTLClassificationMetrics,
+)
 from spine_vision.training.visualization import TrainingVisualizer
 
 __all__ = [
@@ -41,15 +54,23 @@ __all__ = [
     "TrainingResult",
     # Datasets
     "IVDCoordsDataset",
+    "ClassificationDataset",
+    "CropOnlyDataset",
     # Models
     "ConvNextLocalization",
     "ConvNextClassifier",
     "VisionTransformerLocalization",
+    "ResNet50MTL",
+    "MTLPredictions",
+    "MTLTargets",
     # Trainers
     "LocalizationConfig",
     "LocalizationTrainer",
+    "ClassificationConfig",
+    "ClassificationTrainer",
     # Metrics
     "LocalizationMetrics",
+    "MTLClassificationMetrics",
     # Visualization
     "TrainingVisualizer",
 ]

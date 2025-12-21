@@ -7,6 +7,7 @@ Available models:
 - ConvNextLocalization: ConvNext-based coordinate regression
 - ConvNextClassifier: ConvNext-based classification
 - VisionTransformerLocalization: ViT-based coordinate regression
+- ResNet50MTL: ResNet-50 multi-task classification for lumbar spine grading
 """
 
 from spine_vision.training.models.convnext import (
@@ -14,9 +15,17 @@ from spine_vision.training.models.convnext import (
     ConvNextLocalization,
     VisionTransformerLocalization,
 )
+from spine_vision.training.models.resnet_mtl import (
+    MTLPredictions,
+    MTLTargets,
+    ResNet50MTL,
+)
 
 __all__ = [
     "ConvNextLocalization",
     "ConvNextClassifier",
     "VisionTransformerLocalization",
+    "ResNet50MTL",
+    "MTLPredictions",
+    "MTLTargets",
 ]

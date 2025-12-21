@@ -69,7 +69,7 @@ class TrainingConfig(BaseConfig):
     """Task name for organizing outputs (e.g., 'localization', 'classification')."""
 
     # Data paths
-    data_path: Path = Path("data/gold/ivd_coords")
+    data_path: Path = Path("data/processed/ivd_coords")
     output_path: Path | None = None
     """Output directory. Defaults to weights/<task>/<run_id> if not specified."""
 
