@@ -361,6 +361,17 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
     Supports optional wandb logging for experiment tracking.
 
     Subclass this for task-specific training logic.
+
+    Training Hooks (override these for custom behavior):
+        - on_train_begin(): Called before training starts
+        - on_train_end(): Called after training completes
+        - on_epoch_begin(epoch): Called at start of each epoch
+        - on_epoch_end(epoch, train_loss, val_loss, metrics): Called at end of each epoch
+        - on_batch_begin(batch_idx, batch): Called before each training batch
+        - on_batch_end(batch_idx, batch, loss): Called after each training batch
+        - on_validation_begin(): Called before validation
+        - on_validation_end(val_loss, metrics): Called after validation
+        - get_metric_for_checkpoint(val_loss, metrics): Return metric for checkpointing
     """
 
     def __init__(
@@ -594,8 +605,14 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         if self.config.checkpoint_path:
             self._load_checkpoint(self.config.checkpoint_path)
 
+        # Hook: training begins
+        self.on_train_begin()
+
         for epoch in range(self.current_epoch, self.config.num_epochs):
             self.current_epoch = epoch
+
+            # Hook: epoch begins
+            self.on_epoch_begin(epoch)
 
             # Training epoch
             train_loss = self._train_epoch()
@@ -606,6 +623,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             val_loss: float | None = None
             metrics: dict[str, float] = {}
             if self.val_loader and (epoch + 1) % self.config.val_frequency == 0:
+                # Hook: validation begins
+                self.on_validation_begin()
+
                 val_loss, metrics = self._validate_epoch()
                 self.history["val_loss"].append(val_loss)
 
@@ -614,6 +634,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
                     if key not in self.history:
                         self.history[key] = []
                     self.history[key].append(value)
+
+                # Hook: validation ends
+                self.on_validation_end(val_loss, metrics)
 
             # Learning rate scheduling
             if self.scheduler:
@@ -639,8 +662,11 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
                 wandb_metrics[f"val/{key}"] = value
             self._log_to_wandb(wandb_metrics, step=epoch)
 
-            # Checkpointing
-            metric_for_checkpoint = val_loss if val_loss is not None else train_loss
+            # Hook: epoch ends
+            self.on_epoch_end(epoch, train_loss, val_loss, metrics)
+
+            # Checkpointing - use hook to get metric
+            metric_for_checkpoint = self.get_metric_for_checkpoint(val_loss, metrics)
             is_best = metric_for_checkpoint < self.best_metric - self.config.min_delta
             if is_best:
                 self.best_metric = metric_for_checkpoint
@@ -667,12 +693,7 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         if best_checkpoint.exists():
             self._load_checkpoint(best_checkpoint)
 
-        # End wandb run
-        if self._wandb_initialized:
-            self.accelerator.end_training()
-            self._wandb_initialized = False
-
-        return TrainingResult(
+        result = TrainingResult(
             best_epoch=self.best_epoch,
             best_metric=self.best_metric,
             final_train_loss=self.history["train_loss"][-1],
@@ -682,6 +703,16 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             history=self.history,
             checkpoint_path=best_checkpoint,
         )
+
+        # Hook: training ends
+        self.on_train_end(result)
+
+        # End wandb run
+        if self._wandb_initialized:
+            self.accelerator.end_training()
+            self._wandb_initialized = False
+
+        return result
 
     def _train_epoch(self) -> float:
         """Train for one epoch.
@@ -694,9 +725,15 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         num_batches = 0
 
         for batch_idx, batch in enumerate(self.train_loader):
+            # Hook: batch begins
+            self.on_batch_begin(batch_idx, batch)
+
             loss = self._train_step(batch)
             total_loss += loss
             num_batches += 1
+
+            # Hook: batch ends
+            self.on_batch_end(batch_idx, batch, loss)
 
             if (batch_idx + 1) % self.config.log_frequency == 0:
                 avg_loss = total_loss / num_batches
@@ -873,3 +910,119 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         self.history = checkpoint["history"]
 
         logger.info(f"Loaded checkpoint from epoch {checkpoint['epoch'] + 1}")
+
+    # ==================== Training Hooks ====================
+    # Override these methods for custom behavior without copying the entire training loop
+
+    def on_train_begin(self) -> None:
+        """Called before training starts.
+
+        Use this to initialize custom state, logging, or perform setup.
+        """
+        pass
+
+    def on_train_end(self, result: TrainingResult) -> None:
+        """Called after training completes.
+
+        Args:
+            result: Training result with metrics and checkpoint path.
+
+        Use this for final visualizations, cleanup, or post-processing.
+        """
+        pass
+
+    def on_epoch_begin(self, epoch: int) -> None:
+        """Called at the start of each epoch.
+
+        Args:
+            epoch: Current epoch number (0-indexed).
+
+        Use this to adjust learning rate, unfreeze layers, or update state.
+        """
+        pass
+
+    def on_epoch_end(
+        self,
+        epoch: int,
+        train_loss: float,
+        val_loss: float | None,
+        metrics: dict[str, float],
+    ) -> None:
+        """Called at the end of each epoch.
+
+        Args:
+            epoch: Current epoch number (0-indexed).
+            train_loss: Average training loss for the epoch.
+            val_loss: Average validation loss (None if no validation).
+            metrics: Dictionary of validation metrics.
+
+        Use this for custom logging, visualization, or state updates.
+        """
+        pass
+
+    def on_batch_begin(self, batch_idx: int, batch: Any) -> None:
+        """Called before processing each training batch.
+
+        Args:
+            batch_idx: Batch index within the epoch.
+            batch: The batch data.
+
+        Use this for batch-level adjustments or logging.
+        """
+        pass
+
+    def on_batch_end(self, batch_idx: int, batch: Any, loss: float) -> None:
+        """Called after processing each training batch.
+
+        Args:
+            batch_idx: Batch index within the epoch.
+            batch: The batch data.
+            loss: Loss value for this batch.
+
+        Use this for batch-level logging or gradient analysis.
+        """
+        pass
+
+    def on_validation_begin(self) -> None:
+        """Called before validation starts.
+
+        Use this to reset metrics accumulators or prepare for validation.
+        """
+        pass
+
+    def on_validation_end(
+        self,
+        val_loss: float,
+        metrics: dict[str, float],
+    ) -> None:
+        """Called after validation completes.
+
+        Args:
+            val_loss: Average validation loss.
+            metrics: Dictionary of validation metrics.
+
+        Use this for validation visualization or analysis.
+        """
+        pass
+
+    def get_metric_for_checkpoint(
+        self,
+        val_loss: float | None,
+        metrics: dict[str, float],
+    ) -> float:
+        """Get the metric value to use for checkpointing.
+
+        Override this to use a different metric for best model selection.
+        Lower values are considered better (for loss-like metrics).
+
+        Args:
+            val_loss: Validation loss (None if no validation).
+            metrics: Dictionary of validation metrics.
+
+        Returns:
+            Metric value for checkpoint comparison.
+        """
+        # Default: use validation loss, fall back to train loss
+        if val_loss is not None:
+            return val_loss
+        return self.history["train_loss"][-1] if self.history["train_loss"] else float("inf")

@@ -192,10 +192,10 @@ def load_localization_model(
     Returns:
         Loaded model in eval mode.
     """
-    from spine_vision.training.models.convnext import ConvNextLocalization
+    from spine_vision.training.models import CoordinateRegressor
 
-    model = ConvNextLocalization(
-        variant=variant,  # type: ignore[arg-type]
+    model = CoordinateRegressor(
+        backbone=f"convnext_{variant}" if not variant.startswith("v2_") else f"convnextv2_{variant[3:]}",
         pretrained=False,
         num_levels=5,
     )

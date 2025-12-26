@@ -40,16 +40,13 @@ class TestConfig(BaseConfig):
     task: Literal["localization", "classification", "mtl_classification"] = "localization"
     """Task type determines model architecture and output format.
     
-    - localization: ConvNext localization model
-    - classification: ConvNext classifier
-    - mtl_classification: ResNet50-MTL multi-task classification
+    - localization: CoordinateRegressor model
+    - classification: ImageClassifier model
+    - mtl_classification: MultiTaskClassifier model
     """
 
-    model_variant: Literal[
-        "tiny", "small", "base", "large", "xlarge",
-        "v2_tiny", "v2_small", "v2_base", "v2_large", "v2_huge",
-    ] = "base"
-    """ConvNext model variant to use (for localization/classification)."""
+    backbone: str = "convnext_base"
+    """Backbone architecture (see BackboneFactory for options)."""
 
     # Localization-specific options
     level_indices: list[int] | None = None
@@ -420,7 +417,7 @@ def main(config: TestConfig) -> dict:
     Returns:
         Formatted inference results.
     """
-    from spine_vision.training.models import ConvNextClassifier, ConvNextLocalization
+    from spine_vision.training.models import CoordinateRegressor, ImageClassifier, MultiTaskClassifier
 
     setup_logger(verbose=config.verbose)
 
@@ -436,8 +433,8 @@ def main(config: TestConfig) -> dict:
 
     # Run task-specific inference
     if config.task == "localization":
-        model = ConvNextLocalization(
-            variant=config.model_variant,
+        model = CoordinateRegressor(
+            backbone=config.backbone,
             pretrained=False,
             num_levels=config.num_levels if config.use_level_embedding else 1,
         )
@@ -514,9 +511,10 @@ def main(config: TestConfig) -> dict:
                 )
 
     elif config.task == "mtl_classification":
-        from spine_vision.training.models import ResNet50MTL
-
-        mtl_model = ResNet50MTL(pretrained=False)
+        mtl_model = MultiTaskClassifier(
+            backbone=config.backbone,
+            pretrained=False,
+        )
         mtl_model = _load_checkpoint(mtl_model, config)
         logger.info(f"Model loaded: {mtl_model.name}")
 
@@ -528,8 +526,8 @@ def main(config: TestConfig) -> dict:
         formatted = format_mtl_classification_results(result, config.inputs)
 
     else:
-        model = ConvNextClassifier(
-            variant=config.model_variant,
+        model = ImageClassifier(
+            backbone=config.backbone,
             num_classes=config.num_classes,
             pretrained=False,
         )

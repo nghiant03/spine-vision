@@ -1,6 +1,6 @@
 """Classification trainer for multi-task lumbar spine grading.
 
-Specialized trainer for ResNet50-MTL model training with dual-modality input.
+Specialized trainer for multi-task classification with dual-modality input.
 Uses HuggingFace Accelerate and supports wandb logging.
 """
 
@@ -18,8 +18,66 @@ from spine_vision.training.datasets.classification import (
     ClassificationDataset,
 )
 from spine_vision.training.metrics import MTLClassificationMetrics
-from spine_vision.training.models.resnet_mtl import MTLPredictions, MTLTargets, ResNet50MTL
+from spine_vision.training.models import MultiTaskClassifier, MTLTargets, TaskConfig
+from spine_vision.training.registry import register_trainer
 from spine_vision.training.visualization import TrainingVisualizer
+
+
+def _create_lumbar_spine_tasks(
+    label_smoothing: float = 0.1,
+    class_weights: dict[str, torch.Tensor] | None = None,
+) -> list[TaskConfig]:
+    """Create lumbar spine classification tasks with optional class weights.
+
+    Args:
+        label_smoothing: Label smoothing for multiclass tasks.
+        class_weights: Dict mapping task names to class weight tensors.
+
+    Returns:
+        List of TaskConfig for the 6 lumbar spine classification tasks.
+    """
+    cw = class_weights or {}
+
+    return [
+        TaskConfig(
+            name="pfirrmann",
+            num_classes=5,
+            task_type="multiclass",
+            label_smoothing=label_smoothing,
+            class_weights=cw.get("pfirrmann"),
+        ),
+        TaskConfig(
+            name="modic",
+            num_classes=4,
+            task_type="multiclass",
+            label_smoothing=label_smoothing,
+            class_weights=cw.get("modic"),
+        ),
+        TaskConfig(
+            name="herniation",
+            num_classes=2,
+            task_type="multilabel",
+            class_weights=cw.get("herniation"),
+        ),
+        TaskConfig(
+            name="endplate",
+            num_classes=2,
+            task_type="multilabel",
+            class_weights=cw.get("endplate"),
+        ),
+        TaskConfig(
+            name="spondy",
+            num_classes=1,
+            task_type="binary",
+            class_weights=cw.get("spondy"),
+        ),
+        TaskConfig(
+            name="narrowing",
+            num_classes=1,
+            task_type="binary",
+            class_weights=cw.get("narrowing"),
+        ),
+    ]
 
 
 class ClassificationConfig(TrainingConfig):
@@ -30,6 +88,9 @@ class ClassificationConfig(TrainingConfig):
     """Classification dataset path."""
 
     # Model configuration
+    backbone: str = "resnet50"
+    """Backbone architecture (see BackboneFactory for options)."""
+
     pretrained: bool = True
     dropout: float = 0.3
     freeze_backbone_epochs: int = 0
@@ -51,19 +112,30 @@ class ClassificationConfig(TrainingConfig):
     num_visualization_samples: int = 16
 
 
+@register_trainer(
+    "classification",
+    config_cls=ClassificationConfig,
+    description="Multi-task classification for lumbar spine grading",
+)
 class ClassificationTrainer(
-    BaseTrainer[ClassificationConfig, ResNet50MTL, ClassificationDataset]
+    BaseTrainer[ClassificationConfig, MultiTaskClassifier, ClassificationDataset]
 ):
     """Trainer for multi-task lumbar spine classification.
 
-    Uses ResNet50-MTL model with 6 classification heads.
+    Uses MultiTaskClassifier with configurable backbone and 6 classification heads.
     Supports dual-modality input (T1 + T2 crops).
+
+    Uses training hooks:
+    - on_train_begin: Log dataset stats
+    - on_epoch_begin: Handle backbone unfreezing
+    - on_train_end: Generate final visualizations
+    - get_metric_for_checkpoint: Use overall_accuracy (negated for lower-is-better)
     """
 
     def __init__(
         self,
         config: ClassificationConfig,
-        model: ResNet50MTL | None = None,
+        model: MultiTaskClassifier | None = None,
         train_dataset: ClassificationDataset | None = None,
         val_dataset: ClassificationDataset | None = None,
     ) -> None:
@@ -89,20 +161,25 @@ class ClassificationTrainer(
                 augment=False,
             )
 
-        # Compute class weights from training data
-        class_weights = None
+        # Build tasks with class weights from training data
+        class_weights: dict[str, torch.Tensor] | None = None
         if config.use_class_weights:
             class_weights = train_dataset.compute_class_weights()
             logger.info("Using class weights for imbalanced data")
 
+        tasks = _create_lumbar_spine_tasks(
+            label_smoothing=config.label_smoothing,
+            class_weights=class_weights,
+        )
+
         # Create model if not provided
         if model is None:
-            model = ResNet50MTL(
+            model = MultiTaskClassifier(
+                backbone=config.backbone,
+                tasks=tasks,
                 pretrained=config.pretrained,
                 dropout=config.dropout,
                 freeze_backbone=config.freeze_backbone_epochs > 0,
-                label_smoothing=config.label_smoothing,
-                class_weights=class_weights,
             )
 
         super().__init__(config, model, train_dataset, val_dataset)
@@ -150,9 +227,9 @@ class ClassificationTrainer(
         self.optimizer.zero_grad()
 
         with self.accelerator.autocast():
-            predictions: MTLPredictions = self.model(inputs)
+            predictions = self.model(inputs)
             unwrapped_model = self.accelerator.unwrap_model(self.model)
-            loss = unwrapped_model.get_loss(predictions, targets)
+            loss = unwrapped_model.get_loss(predictions, targets.to_dict())
 
         self.accelerator.backward(loss)
 
@@ -182,9 +259,9 @@ class ClassificationTrainer(
                 targets: MTLTargets = batch["targets"].to(self.accelerator.device)
 
                 with self.accelerator.autocast():
-                    predictions: MTLPredictions = self.model(inputs)
+                    predictions = self.model(inputs)
                     unwrapped_model = self.accelerator.unwrap_model(self.model)
-                    loss = unwrapped_model.get_loss(predictions, targets)
+                    loss = unwrapped_model.get_loss(predictions, targets.to_dict())
 
                 total_loss += loss.item()
                 num_batches += 1
@@ -230,138 +307,45 @@ class ClassificationTrainer(
 
         return [img for img in images_np]
 
-    def train(self) -> TrainingResult:
-        """Train with backbone unfreezing support."""
+    # ==================== Training Hooks ====================
+
+    def on_train_begin(self) -> None:
+        """Log dataset stats and freeze info at training start."""
         if self.config.freeze_backbone_epochs > 0:
             logger.info(
                 f"Backbone frozen for first {self.config.freeze_backbone_epochs} epochs"
             )
 
-        return self._train_loop()
-
-    def _train_loop(self) -> TrainingResult:
-        """Main training loop."""
-        unwrapped_model = self.accelerator.unwrap_model(self.model)
-
-        logger.info(f"Starting training for {self.config.num_epochs} epochs")
-        logger.info(f"Model: {unwrapped_model.name}")
-        logger.info(f"Parameters: {unwrapped_model.count_parameters():,}")
-        logger.info(f"Device: {self.device}")
-        logger.info(f"Train samples: {len(self.train_dataset)}")
-        if self.val_dataset:
-            logger.info(f"Val samples: {len(self.val_dataset)}")
-        if self.config.use_wandb:
-            logger.info(f"Logging to wandb: {self.config.wandb_project}")
-
-        # Log dataset stats
         stats = self.train_dataset.get_stats()
         logger.info(f"Train dataset stats: {stats}")
 
-        if self.config.checkpoint_path:
-            self._load_checkpoint(self.config.checkpoint_path)
+    def on_epoch_begin(self, epoch: int) -> None:
+        """Handle backbone unfreezing."""
+        if (
+            not self._backbone_unfrozen
+            and epoch >= self.config.freeze_backbone_epochs
+        ):
+            logger.info(f"Unfreezing backbone at epoch {epoch + 1}")
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_model.unfreeze_backbone()
+            self._backbone_unfrozen = True
 
-        for epoch in range(self.current_epoch, self.config.num_epochs):
-            self.current_epoch = epoch
-
-            # Unfreeze backbone if needed
-            if (
-                not self._backbone_unfrozen
-                and epoch >= self.config.freeze_backbone_epochs
-            ):
-                logger.info(f"Unfreezing backbone at epoch {epoch + 1}")
-                unwrapped_model.unfreeze_backbone()
-                self._backbone_unfrozen = True
-
-            # Training
-            train_loss = self._train_epoch()
-            self.history["train_loss"].append(train_loss)
-            self.history["lr"].append(self.optimizer.param_groups[0]["lr"])
-
-            # Validation
-            val_loss: float | None = None
-            metrics: dict[str, float] = {}
-            if self.val_loader and (epoch + 1) % self.config.val_frequency == 0:
-                val_loss, metrics = self._validate_epoch()
-                self.history["val_loss"].append(val_loss)
-
-                for key, value in metrics.items():
-                    if key not in self.history:
-                        self.history[key] = []
-                    self.history[key].append(value)
-
-            # Scheduler step
-            if self.scheduler:
-                if isinstance(
-                    self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
-                ):
-                    if val_loss is not None:
-                        self.scheduler.step(val_loss)
-                else:
-                    self.scheduler.step()
-
-            # Logging
-            self._log_epoch(epoch, train_loss, val_loss, metrics)
-
-            # Log to wandb
-            wandb_metrics = {
-                "train/loss": train_loss,
-                "train/lr": self.optimizer.param_groups[0]["lr"],
-            }
-            if val_loss is not None:
-                wandb_metrics["val/loss"] = val_loss
-            for key, value in metrics.items():
-                wandb_metrics[f"val/{key}"] = value
-            self._log_to_wandb(wandb_metrics, step=epoch)
-
-            # Checkpointing (use overall accuracy, higher is better)
-            metric_for_checkpoint = -metrics.get(
-                "overall_accuracy", -(val_loss if val_loss else train_loss)
-            )
-            is_best = metric_for_checkpoint < self.best_metric - self.config.min_delta
-            if is_best:
-                self.best_metric = metric_for_checkpoint
-                self.best_epoch = epoch
-                self.patience_counter = 0
-                self._save_checkpoint(is_best=True)
-            else:
-                self.patience_counter += 1
-
-            if (epoch + 1) % self.config.save_frequency == 0:
-                self._save_checkpoint(is_best=False)
-
-            # Early stopping
-            if (
-                self.config.early_stopping
-                and self.patience_counter >= self.config.patience
-            ):
-                logger.info(f"Early stopping at epoch {epoch + 1}")
-                break
-
-        # Load best model
-        assert self.config.output_path is not None
-        best_checkpoint = self.config.output_path / "best_model.pt"
-        if best_checkpoint.exists():
-            self._load_checkpoint(best_checkpoint)
-
-        # Generate final visualizations
+    def on_train_end(self, result: TrainingResult) -> None:
+        """Generate final visualizations."""
         if self.accelerator.is_main_process:
             self._generate_final_visualizations()
 
-        # End wandb run
-        if self._wandb_initialized:
-            self.accelerator.end_training()
-            self._wandb_initialized = False
-
-        return TrainingResult(
-            best_epoch=self.best_epoch,
-            best_metric=-self.best_metric,  # Convert back to positive
-            final_train_loss=self.history["train_loss"][-1],
-            final_val_loss=self.history["val_loss"][-1]
-            if self.history["val_loss"]
-            else 0.0,
-            history=self.history,
-            checkpoint_path=best_checkpoint,
-        )
+    def get_metric_for_checkpoint(
+        self,
+        val_loss: float | None,
+        metrics: dict[str, float],
+    ) -> float:
+        """Use overall accuracy for checkpointing (negated for lower-is-better)."""
+        if "overall_accuracy" in metrics:
+            return -metrics["overall_accuracy"]
+        if val_loss is not None:
+            return val_loss
+        return self.history["train_loss"][-1] if self.history["train_loss"] else float("inf")
 
     def _generate_final_visualizations(self) -> None:
         """Generate final training visualizations."""
@@ -398,7 +382,7 @@ class ClassificationTrainer(
                 inputs = batch["image"]
                 targets: MTLTargets = batch["targets"]
 
-                predictions: MTLPredictions = self.model(inputs)
+                predictions = self.model(inputs)
                 self.metrics.update(predictions, targets)
 
         metrics = self.metrics.compute()

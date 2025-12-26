@@ -271,16 +271,39 @@ from spine_vision.training import (
     # Datasets
     IVDCoordsDataset, ClassificationDataset, ClassificationCollator,
     LEVEL_TO_IDX, IDX_TO_LEVEL, construct_3channel,
-    # Models (via timm)
+    # Models (via timm) - auto-registered
     ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization,
     ResNet50MTL, MTLPredictions, MTLTargets,
-    # Trainers
+    # Trainers - auto-registered
     LocalizationConfig, LocalizationTrainer,
     ClassificationConfig, ClassificationTrainer,
+    # Registries for extensibility
+    ModelRegistry, TrainerRegistry, MetricsRegistry,
+    register_model, register_trainer, register_metrics,
+    # Configurable heads
+    HeadConfig, HeadFactory, create_head, BaseHead, MLPHead, MultiTaskHead,
     # Metrics & Visualization
     BaseMetrics, MetricResult, LocalizationMetrics, MTLClassificationMetrics,
     TrainingVisualizer,
 )
+
+# Using registries for dynamic model/trainer discovery
+model = ModelRegistry.create("convnext_localization", variant="base")
+trainer = TrainerRegistry.create_from_config(config)  # Uses config.task
+
+# List available models/trainers
+ModelRegistry.list_models(task="localization")  # ["convnext_localization", "vit_localization"]
+TrainerRegistry.list_trainers()  # ["localization", "classification"]
+
+# Using configurable heads
+from spine_vision.training.heads import HeadConfig
+head_config = HeadConfig(
+    head_type="attention",  # or "mlp", "residual", "conv", "linear"
+    hidden_dims=[512],
+    dropout=0.2,
+    output_activation="sigmoid",
+)
+model = ConvNextLocalization(variant="base", head_config=head_config)
 
 # Training localization model with wandb logging
 # Output structure: weights/localization/<run_id>/
@@ -582,18 +605,36 @@ Command = Union[
 ```
 
 ### New Training Model
-Create a new model in `spine_vision/training/models/`:
+Create a new model in `spine_vision/training/models/` using the registry decorator:
 ```python
 # spine_vision/training/models/my_model.py
 import timm
+import torch.nn as nn
 from spine_vision.training.base import BaseModel
+from spine_vision.training.registry import register_model
+from spine_vision.training.heads import HeadConfig, create_head
 
+@register_model(
+    "my_model",
+    task="classification",
+    description="My custom model",
+    aliases=["my_alias"],
+)
 class MyModel(BaseModel):
-    def __init__(self, num_classes: int = 4) -> None:
+    def __init__(
+        self,
+        num_classes: int = 4,
+        head_config: HeadConfig | None = None,  # Configurable head
+    ) -> None:
         super().__init__()
         # Use timm for pretrained backbones
         self.backbone = timm.create_model("resnet50", pretrained=True, num_classes=0)
-        self.head = nn.Linear(self.backbone.num_features, num_classes)
+        
+        # Use configurable head or default
+        if head_config is not None:
+            self.head = create_head(head_config, self.backbone.num_features, num_classes)
+        else:
+            self.head = nn.Linear(self.backbone.num_features, num_classes)
     
     @property
     def name(self) -> str:
@@ -607,27 +648,93 @@ class MyModel(BaseModel):
     
     # test_inference() is already provided by BaseModel
     # Override for custom behavior if needed
+
+# Models are auto-discovered via registry
+# Access: ModelRegistry.create("my_model", num_classes=10)
+# List: ModelRegistry.list_models(task="classification")
+```
+
+### Configurable Heads
+Use `HeadConfig` to experiment with different head architectures:
+```python
+from spine_vision.training.heads import HeadConfig, create_head, HeadFactory
+
+# Available head types: mlp, linear, attention, residual, conv
+config = HeadConfig(
+    head_type="mlp",          # or "attention", "residual", etc.
+    hidden_dims=[512, 256],   # Hidden layer dimensions
+    dropout=0.2,
+    activation="gelu",
+    use_layer_norm=True,
+    output_activation="sigmoid",  # For regression in [0,1]
+)
+head = create_head(config, in_features=2048, out_features=2)
+
+# Or use factory directly
+head = HeadFactory.create("attention", in_features=2048, out_features=4, num_heads=8)
+
+# Register custom head type
+@HeadFactory.register("my_head")
+class MyHead(BaseHead):
+    ...
 ```
 
 ### New Training Task
-Create a new trainer in `spine_vision/training/trainers/`:
+Create a new trainer using the registry and hooks:
 ```python
 # spine_vision/training/trainers/my_task.py
-from spine_vision.training.base import BaseTrainer, TrainingConfig
+from spine_vision.training.base import BaseTrainer, TrainingConfig, TrainingResult
+from spine_vision.training.registry import register_trainer
 
 class MyTaskConfig(TrainingConfig):
     """Configuration for my task."""
+    task: str = "my_task"  # Used for output path: weights/my_task/<run_id>
     my_param: int = 10
-    # Wandb options are inherited from TrainingConfig:
-    # use_wandb, wandb_project, wandb_run_name, wandb_tags
 
+@register_trainer("my_task", config_cls=MyTaskConfig)
 class MyTaskTrainer(BaseTrainer[MyTaskConfig, MyModel, MyDataset]):
     def _unpack_batch(self, batch) -> tuple[torch.Tensor, torch.Tensor]:
         return batch["input"], batch["target"]
     
     def _compute_metrics(self, predictions, targets) -> dict[str, float]:
         return {"accuracy": compute_accuracy(predictions, targets)}
+    
+    # Use hooks instead of overriding train() - less code duplication!
+    def on_train_begin(self) -> None:
+        """Called before training starts."""
+        logger.info(f"My param: {self.config.my_param}")
+    
+    def on_epoch_begin(self, epoch: int) -> None:
+        """Called at start of each epoch. Good for unfreezing, LR adjustments."""
+        if epoch == 5:
+            self.accelerator.unwrap_model(self.model).unfreeze_backbone()
+    
+    def on_train_end(self, result: TrainingResult) -> None:
+        """Called after training. Good for final visualizations."""
+        self.visualizer.plot_training_curves(self.history)
+    
+    def get_metric_for_checkpoint(self, val_loss, metrics) -> float:
+        """Override to use custom metric for best model selection."""
+        return -metrics.get("accuracy", 0)  # Negate for lower-is-better
+
+# Trainers are auto-discovered via registry
+# Access: TrainerRegistry.create("my_task", config)
+# Or: TrainerRegistry.create_from_config(config)  # Uses config.task
 ```
+
+### Training Hooks Reference
+Available hooks in `BaseTrainer`:
+| Hook | When Called | Use Case |
+|------|-------------|----------|
+| `on_train_begin()` | Before training loop | Initialize state, log info |
+| `on_train_end(result)` | After training completes | Final visualizations, cleanup |
+| `on_epoch_begin(epoch)` | Start of each epoch | Unfreeze layers, adjust LR |
+| `on_epoch_end(epoch, train_loss, val_loss, metrics)` | End of each epoch | Custom logging |
+| `on_batch_begin(batch_idx, batch)` | Before each batch | Batch-level adjustments |
+| `on_batch_end(batch_idx, batch, loss)` | After each batch | Gradient analysis |
+| `on_validation_begin()` | Before validation | Reset metrics accumulators |
+| `on_validation_end(val_loss, metrics)` | After validation | Validation visualization |
+| `get_metric_for_checkpoint(val_loss, metrics)` | During checkpointing | Custom metric for best model |
 
 Then register in `spine_vision/cli/__init__.py` under `TrainSubcommand`.
 

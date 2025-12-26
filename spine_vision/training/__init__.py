@@ -8,10 +8,19 @@ This module provides extensible training infrastructure for various tasks:
 Uses HuggingFace Accelerate for distributed training and mixed precision,
 with optional wandb logging for experiment tracking.
 
+Key Features:
+- Model/Trainer registries for dynamic discovery
+- Configurable backbone via BackboneFactory
+- Configurable head architectures via HeadConfig
+- Training hooks for custom behavior without overriding train loop
+- Stateful metrics for consistent evaluation
+
 Exports:
     - Base classes: BaseTrainer, BaseModel, TrainingConfig
+    - Registries: ModelRegistry, TrainerRegistry, MetricsRegistry
+    - Heads: HeadConfig, HeadFactory, create_head
     - Datasets: IVDCoordsDataset, ClassificationDataset
-    - Models: ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization, ResNet50MTL
+    - Models: ImageClassifier, MultiTaskClassifier, CoordinateRegressor
     - Trainers: LocalizationTrainer, LocalizationConfig, ClassificationTrainer, ClassificationConfig
     - Metrics: LocalizationMetrics, MTLClassificationMetrics
     - Visualization: TrainingVisualizer
@@ -27,14 +36,39 @@ from spine_vision.training.datasets import (
     ClassificationDataset,
     IVDCoordsDataset,
 )
-from spine_vision.training.metrics import LocalizationMetrics, MTLClassificationMetrics
+from spine_vision.training.heads import (
+    BaseHead,
+    HeadConfig,
+    HeadFactory,
+    MLPHead,
+    MultiTaskHead,
+    create_head,
+)
+from spine_vision.training.metrics import (
+    BaseMetrics,
+    ClassificationMetrics,
+    LocalizationMetrics,
+    MTLClassificationMetrics,
+    RegressionMetrics,
+)
 from spine_vision.training.models import (
-    ConvNextClassifier,
-    ConvNextLocalization,
-    MTLPredictions,
+    BACKBONES,
+    BackboneFactory,
+    CoordinateRegressor,
+    ImageClassifier,
+    LUMBAR_SPINE_TASKS,
     MTLTargets,
-    ResNet50MTL,
-    VisionTransformerLocalization,
+    MultiTaskClassifier,
+    TaskConfig,
+    list_backbones,
+)
+from spine_vision.training.registry import (
+    MetricsRegistry,
+    ModelRegistry,
+    TrainerRegistry,
+    register_metrics,
+    register_model,
+    register_trainer,
 )
 from spine_vision.training.trainers import (
     ClassificationConfig,
@@ -50,23 +84,43 @@ __all__ = [
     "BaseTrainer",
     "TrainingConfig",
     "TrainingResult",
+    # Registries
+    "ModelRegistry",
+    "TrainerRegistry",
+    "MetricsRegistry",
+    "register_model",
+    "register_trainer",
+    "register_metrics",
+    # Heads
+    "HeadConfig",
+    "HeadFactory",
+    "BaseHead",
+    "MLPHead",
+    "MultiTaskHead",
+    "create_head",
     # Datasets
     "IVDCoordsDataset",
     "ClassificationDataset",
     # Models
-    "ConvNextLocalization",
-    "ConvNextClassifier",
-    "VisionTransformerLocalization",
-    "ResNet50MTL",
-    "MTLPredictions",
+    "ImageClassifier",
+    "MultiTaskClassifier",
+    "CoordinateRegressor",
+    "TaskConfig",
+    "LUMBAR_SPINE_TASKS",
     "MTLTargets",
+    "BackboneFactory",
+    "BACKBONES",
+    "list_backbones",
     # Trainers
     "LocalizationConfig",
     "LocalizationTrainer",
     "ClassificationConfig",
     "ClassificationTrainer",
     # Metrics
+    "BaseMetrics",
     "LocalizationMetrics",
+    "ClassificationMetrics",
+    "RegressionMetrics",
     "MTLClassificationMetrics",
     # Visualization
     "TrainingVisualizer",

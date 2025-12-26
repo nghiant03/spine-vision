@@ -145,7 +145,7 @@ def boxes_from_segmentation(
     origin = segmentation.GetOrigin()
 
     if labels is None:
-        labels = [int(l) for l in np.unique(seg_array) if l != 0]
+        labels = [int(label) for label in np.unique(seg_array) if label != 0]
 
     boxes = []
     for label in labels:

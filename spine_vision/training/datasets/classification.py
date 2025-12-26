@@ -29,7 +29,7 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from spine_vision.training.models.resnet_mtl import MTLTargets
+from spine_vision.training.models import MTLTargets
 
 
 # IVD level mapping (L1/L2 to L5/S1)

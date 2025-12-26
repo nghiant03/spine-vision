@@ -356,43 +356,59 @@ class MTLClassificationMetrics:
 
     def update(
         self,
-        predictions: Any,  # MTLPredictions
-        targets: Any,  # MTLTargets
+        predictions: Any,  # MTLPredictions or dict[str, Tensor]
+        targets: Any,  # MTLTargets or dict[str, Tensor]
     ) -> None:
-        """Accumulate predictions from a batch."""
+        """Accumulate predictions from a batch.
+
+        Args:
+            predictions: MTLPredictions dataclass or dict with task tensors.
+            targets: MTLTargets dataclass or dict with task tensors.
+        """
+        # Support both dict and dataclass access
+        def get_pred(key: str) -> torch.Tensor:
+            if isinstance(predictions, dict):
+                return predictions[key]
+            return getattr(predictions, key)
+
+        def get_target(key: str) -> torch.Tensor:
+            if isinstance(targets, dict):
+                return targets[key]
+            return getattr(targets, key)
+
         # Multiclass heads
-        pfirrmann_pred = predictions.pfirrmann.argmax(dim=1).cpu().numpy()
-        modic_pred = predictions.modic.argmax(dim=1).cpu().numpy()
+        pfirrmann_pred = get_pred("pfirrmann").argmax(dim=1).cpu().numpy()
+        modic_pred = get_pred("modic").argmax(dim=1).cpu().numpy()
 
         self.pfirrmann_metrics.update(
             pfirrmann_pred,
-            targets.pfirrmann.cpu().numpy(),
+            get_target("pfirrmann").cpu().numpy(),
         )
         self.modic_metrics.update(
             modic_pred,
-            targets.modic.cpu().numpy(),
+            get_target("modic").cpu().numpy(),
         )
 
         # Binary heads (sigmoid probabilities)
         self._herniation_preds.append(
-            torch.sigmoid(predictions.herniation).cpu().numpy()
+            torch.sigmoid(get_pred("herniation")).cpu().numpy()
         )
-        self._herniation_targets.append(targets.herniation.cpu().numpy())
+        self._herniation_targets.append(get_target("herniation").cpu().numpy())
 
         self._endplate_preds.append(
-            torch.sigmoid(predictions.endplate).cpu().numpy()
+            torch.sigmoid(get_pred("endplate")).cpu().numpy()
         )
-        self._endplate_targets.append(targets.endplate.cpu().numpy())
+        self._endplate_targets.append(get_target("endplate").cpu().numpy())
 
         self._spondy_preds.append(
-            torch.sigmoid(predictions.spondy).cpu().numpy()
+            torch.sigmoid(get_pred("spondy")).cpu().numpy()
         )
-        self._spondy_targets.append(targets.spondy.cpu().numpy())
+        self._spondy_targets.append(get_target("spondy").cpu().numpy())
 
         self._narrowing_preds.append(
-            torch.sigmoid(predictions.narrowing).cpu().numpy()
+            torch.sigmoid(get_pred("narrowing")).cpu().numpy()
         )
-        self._narrowing_targets.append(targets.narrowing.cpu().numpy())
+        self._narrowing_targets.append(get_target("narrowing").cpu().numpy())
 
     def compute(self) -> dict[str, float]:
         """Compute all metrics."""

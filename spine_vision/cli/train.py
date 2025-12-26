@@ -36,7 +36,7 @@ def _train_localization(config: LocalizationConfig) -> None:
     logger.info("=" * 50)
     logger.info(f"Data path: {config.data_path}")
     logger.info(f"Output path: {config.output_path}")
-    logger.info(f"Model variant: {config.model_variant}")
+    logger.info(f"Backbone: {config.backbone}")
     logger.info(f"Batch size: {config.batch_size}")
     logger.info(f"Learning rate: {config.learning_rate}")
     logger.info(f"Epochs: {config.num_epochs}")

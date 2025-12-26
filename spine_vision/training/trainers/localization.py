@@ -1,6 +1,6 @@
 """Localization trainer for coordinate regression.
 
-Specialized trainer for IVD localization with ConvNext models.
+Specialized trainer for IVD localization with configurable backbone.
 Uses HuggingFace Accelerate and supports wandb logging.
 """
 
@@ -19,7 +19,8 @@ from spine_vision.training.datasets.ivd_coords import (
     IVDCoordsDataset,
 )
 from spine_vision.training.metrics import LocalizationMetrics
-from spine_vision.training.models.convnext import ConvNextLocalization
+from spine_vision.training.models import CoordinateRegressor
+from spine_vision.training.registry import register_trainer
 from spine_vision.training.visualization import TrainingVisualizer
 
 
@@ -30,11 +31,8 @@ class LocalizationConfig(TrainingConfig):
     task: str = "localization"
 
     # Model configuration
-    model_variant: Literal[
-        "tiny", "small", "base", "large", "xlarge",
-        "v2_tiny", "v2_small", "v2_base", "v2_large", "v2_huge"
-    ] = "base"
-    """ConvNext variant to use (timm models)."""
+    backbone: str = "convnext_base"
+    """Backbone architecture (see BackboneFactory for options)."""
 
     pretrained: bool = True
     """Use ImageNet pretrained weights."""
@@ -81,19 +79,30 @@ class LocalizationConfig(TrainingConfig):
     """Number of samples to visualize."""
 
 
+@register_trainer(
+    "localization",
+    config_cls=LocalizationConfig,
+    description="IVD localization with coordinate regression",
+)
 class LocalizationTrainer(
-    BaseTrainer[LocalizationConfig, ConvNextLocalization, IVDCoordsDataset]
+    BaseTrainer[LocalizationConfig, CoordinateRegressor, IVDCoordsDataset]
 ):
     """Trainer for IVD localization with coordinate regression.
 
     Uses HuggingFace Accelerate for distributed training and mixed precision.
     Supports optional wandb logging for experiment tracking.
+
+    Uses training hooks instead of overriding the entire train loop:
+    - on_train_begin: Log dataset stats
+    - on_epoch_begin: Handle backbone unfreezing
+    - on_train_end: Generate final visualizations
+    - get_metric_for_checkpoint: Use MED instead of loss
     """
 
     def __init__(
         self,
         config: LocalizationConfig,
-        model: ConvNextLocalization | None = None,
+        model: CoordinateRegressor | None = None,
         train_dataset: IVDCoordsDataset | None = None,
         val_dataset: IVDCoordsDataset | None = None,
     ) -> None:
@@ -105,8 +114,8 @@ class LocalizationTrainer(
         # Create model if not provided
         if model is None:
             num_levels = NUM_LEVELS if config.use_level_embedding else 1
-            model = ConvNextLocalization(
-                variant=config.model_variant,
+            model = CoordinateRegressor(
+                backbone=config.backbone,
                 num_outputs=2,
                 pretrained=config.pretrained,
                 dropout=config.dropout,
@@ -328,139 +337,46 @@ class LocalizationTrainer(
 
         return [img for img in images_np]
 
-    def train(self) -> TrainingResult:
-        """Train with backbone unfreezing support."""
-        # Check if we need to unfreeze backbone at some point
+    # ==================== Training Hooks ====================
+
+    def on_train_begin(self) -> None:
+        """Log dataset stats and freeze info at training start."""
         if self.config.freeze_backbone_epochs > 0:
             logger.info(
                 f"Backbone frozen for first {self.config.freeze_backbone_epochs} epochs"
             )
 
-        return self._train_loop()
-
-    def _train_loop(self) -> TrainingResult:
-        """Main training loop with backbone unfreezing."""
-        unwrapped_model = self.accelerator.unwrap_model(self.model)
-
-        logger.info(f"Starting training for {self.config.num_epochs} epochs")
-        logger.info(f"Model: {unwrapped_model.name}")
-        logger.info(f"Parameters: {unwrapped_model.count_parameters():,}")
-        logger.info(f"Device: {self.device}")
-        logger.info(f"Train samples: {len(self.train_dataset)}")
-        if self.val_dataset:
-            logger.info(f"Val samples: {len(self.val_dataset)}")
-        if self.config.use_wandb:
-            logger.info(f"Logging to wandb project: {self.config.wandb_project}")
-
         # Log dataset statistics
         stats = self.train_dataset.get_stats()
         logger.info(f"Train dataset stats: {stats}")
 
-        if self.config.checkpoint_path:
-            self._load_checkpoint(self.config.checkpoint_path)
+    def on_epoch_begin(self, epoch: int) -> None:
+        """Handle backbone unfreezing."""
+        if (
+            not self._backbone_unfrozen
+            and epoch >= self.config.freeze_backbone_epochs
+        ):
+            logger.info(f"Unfreezing backbone at epoch {epoch + 1}")
+            unwrapped_model = self.accelerator.unwrap_model(self.model)
+            unwrapped_model.unfreeze_backbone()
+            self._backbone_unfrozen = True
 
-        for epoch in range(self.current_epoch, self.config.num_epochs):
-            self.current_epoch = epoch
-
-            # Unfreeze backbone if needed
-            if (
-                not self._backbone_unfrozen
-                and epoch >= self.config.freeze_backbone_epochs
-            ):
-                logger.info(f"Unfreezing backbone at epoch {epoch + 1}")
-                unwrapped_model.unfreeze_backbone()
-                self._backbone_unfrozen = True
-
-            # Training
-            train_loss = self._train_epoch()
-            self.history["train_loss"].append(train_loss)
-            self.history["lr"].append(self.optimizer.param_groups[0]["lr"])
-
-            # Validation
-            val_loss: float | None = None
-            metrics: dict[str, float] = {}
-            if self.val_loader and (epoch + 1) % self.config.val_frequency == 0:
-                val_loss, metrics = self._validate_epoch()
-                self.history["val_loss"].append(val_loss)
-
-                for key, value in metrics.items():
-                    if key not in self.history:
-                        self.history[key] = []
-                    self.history[key].append(value)
-
-            # Scheduler step
-            if self.scheduler:
-                if isinstance(
-                    self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau
-                ):
-                    if val_loss is not None:
-                        self.scheduler.step(val_loss)
-                else:
-                    self.scheduler.step()
-
-            # Logging
-            self._log_epoch(epoch, train_loss, val_loss, metrics)
-
-            # Log to wandb
-            wandb_metrics = {
-                "train/loss": train_loss,
-                "train/lr": self.optimizer.param_groups[0]["lr"],
-            }
-            if val_loss is not None:
-                wandb_metrics["val/loss"] = val_loss
-            for key, value in metrics.items():
-                wandb_metrics[f"val/{key}"] = value
-            self._log_to_wandb(wandb_metrics, step=epoch)
-
-            # Checkpointing (use MED as primary metric, lower is better)
-            metric_for_checkpoint = metrics.get(
-                "med", val_loss if val_loss else train_loss
-            )
-            is_best = metric_for_checkpoint < self.best_metric - self.config.min_delta
-            if is_best:
-                self.best_metric = metric_for_checkpoint
-                self.best_epoch = epoch
-                self.patience_counter = 0
-                self._save_checkpoint(is_best=True)
-            else:
-                self.patience_counter += 1
-
-            if (epoch + 1) % self.config.save_frequency == 0:
-                self._save_checkpoint(is_best=False)
-
-            # Early stopping
-            if (
-                self.config.early_stopping
-                and self.patience_counter >= self.config.patience
-            ):
-                logger.info(f"Early stopping at epoch {epoch + 1}")
-                break
-
-        # Load best model
-        assert self.config.output_path is not None
-        best_checkpoint = self.config.output_path / "best_model.pt"
-        if best_checkpoint.exists():
-            self._load_checkpoint(best_checkpoint)
-
-        # Generate final visualizations (before ending wandb)
+    def on_train_end(self, result: TrainingResult) -> None:
+        """Generate final visualizations."""
         if self.accelerator.is_main_process:
             self._generate_final_visualizations()
 
-        # End wandb run
-        if self._wandb_initialized:
-            self.accelerator.end_training()
-            self._wandb_initialized = False
-
-        return TrainingResult(
-            best_epoch=self.best_epoch,
-            best_metric=self.best_metric,
-            final_train_loss=self.history["train_loss"][-1],
-            final_val_loss=self.history["val_loss"][-1]
-            if self.history["val_loss"]
-            else 0.0,
-            history=self.history,
-            checkpoint_path=best_checkpoint,
-        )
+    def get_metric_for_checkpoint(
+        self,
+        val_loss: float | None,
+        metrics: dict[str, float],
+    ) -> float:
+        """Use MED as primary metric for checkpointing (lower is better)."""
+        if "med" in metrics:
+            return metrics["med"]
+        if val_loss is not None:
+            return val_loss
+        return self.history["train_loss"][-1] if self.history["train_loss"] else float("inf")
 
     def _generate_final_visualizations(self) -> None:
         """Generate final training visualizations."""
