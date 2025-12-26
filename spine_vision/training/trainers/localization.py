@@ -449,6 +449,7 @@ class LocalizationTrainer(
         # End wandb run
         if self._wandb_initialized:
             self.accelerator.end_training()
+            self._wandb_initialized = False
 
         return TrainingResult(
             best_epoch=self.best_epoch,

@@ -6,13 +6,11 @@ Provides PyTorch Dataset implementations for various training tasks.
 from spine_vision.training.datasets.classification import (
     ClassificationCollator,
     ClassificationDataset,
-    CropOnlyDataset,
 )
 from spine_vision.training.datasets.ivd_coords import IVDCoordsDataset
 
 __all__ = [
     "IVDCoordsDataset",
     "ClassificationDataset",
-    "CropOnlyDataset",
     "ClassificationCollator",
 ]

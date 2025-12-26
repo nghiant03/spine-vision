@@ -53,10 +53,17 @@ spine-vision visualize [OPTIONS]               # Visualize segmentation with inf
 uv run python -m spine_vision.cli [OPTIONS]
 ```
 
-### Type Checking
+### Type Checking (REQUIRED)
 ```bash
 uv run pyright spine_vision
 ```
+
+### Linting (REQUIRED)
+```bash
+uv run ruff check --fix spine_vision
+```
+
+> **IMPORTANT**: Always run the type checker and linter after making code changes. This is mandatory before completing any task.
 
 ## Project Structure
 
@@ -108,17 +115,21 @@ spine-vision/
 │   ├── training/              # Training infrastructure
 │   │   ├── __init__.py
 │   │   ├── base.py            # BaseTrainer, BaseModel, TrainingConfig
-│   │   ├── metrics.py         # LocalizationMetrics, ClassificationMetrics
+│   │   ├── metrics.py         # BaseMetrics, LocalizationMetrics, MTLClassificationMetrics
 │   │   ├── visualization.py   # TrainingVisualizer for curves/predictions
 │   │   ├── datasets/          # PyTorch datasets for training
 │   │   │   ├── __init__.py
-│   │   │   └── ivd_coords.py  # IVDCoordsDataset
+│   │   │   ├── ivd_coords.py  # IVDCoordsDataset
+│   │   │   └── classification.py # ClassificationDataset, ClassificationCollator
 │   │   ├── models/            # Model architectures
 │   │   │   ├── __init__.py
-│   │   │   └── convnext.py    # ConvNextLocalization, ConvNextClassifier
+│   │   │   ├── convnext.py    # ConvNextLocalization, ConvNextClassifier
+│   │   │   ├── resnet_mtl.py  # ResNet50MTL, MTLPredictions, MTLTargets
+│   │   │   └── vit.py         # VisionTransformerLocalization
 │   │   └── trainers/          # Task-specific trainers
 │   │       ├── __init__.py
-│   │       └── localization.py # LocalizationTrainer, LocalizationConfig
+│   │       ├── localization.py # LocalizationTrainer, LocalizationConfig
+│   │       └── classification.py # ClassificationTrainer, ClassificationConfig
 │   └── cli/                   # Unified CLI with subcommands
 │       ├── __init__.py        # Main entry point (dataset, train, visualize)
 │       ├── visualize.py       # Visualization command config and logic
@@ -258,15 +269,17 @@ from spine_vision.training import (
     # Base classes
     BaseModel, BaseTrainer, TrainingConfig, TrainingResult,
     # Datasets
-    IVDCoordsDataset, ClassificationDataset, CropOnlyDataset,
+    IVDCoordsDataset, ClassificationDataset, ClassificationCollator,
+    LEVEL_TO_IDX, IDX_TO_LEVEL, construct_3channel,
     # Models (via timm)
     ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization,
     ResNet50MTL, MTLPredictions, MTLTargets,
     # Trainers
     LocalizationConfig, LocalizationTrainer,
-    ClassificationConfig, ClassificationTrainer, MTLClassificationMetrics,
+    ClassificationConfig, ClassificationTrainer,
     # Metrics & Visualization
-    LocalizationMetrics, TrainingVisualizer,
+    BaseMetrics, MetricResult, LocalizationMetrics, MTLClassificationMetrics,
+    TrainingVisualizer,
 )
 
 # Training localization model with wandb logging
@@ -302,9 +315,10 @@ test_metrics = trainer.evaluate()
 #   - Narrowing (1 binary)
 config = ClassificationConfig(
     data_path=Path("data/processed/classification"),
-    crop_size=128,  # Size to crop from original DICOM
     output_size=(224, 224),  # Final input to model
-    use_preextracted_crops=False,  # Set True if using CropOnlyDataset
+    dropout=0.3,
+    label_smoothing=0.1,
+    freeze_backbone_epochs=5,  # Freeze ResNet backbone initially
     batch_size=32,
     num_epochs=100,
     learning_rate=1e-4,
@@ -322,14 +336,14 @@ dataset = IVDCoordsDataset(
     augment=True,
 )
 
-# Create classification dataset with dual-modality cropping
-# Loads T1+T2 crops from DICOM based on localization coordinates
+# Create classification dataset from pre-extracted crops
+# Automatically pairs T1+T2 images for 3-channel [T2, T1, T2] input
 dataset = ClassificationDataset(
     data_path=Path("data/processed/classification"),
     split="train",
-    localization_size=(224, 224),  # Size used by localizer
-    crop_size=128,  # Crop size from original image
+    levels=["L4/L5", "L5/S1"],  # Optional level filtering
     output_size=(224, 224),  # Final resize
+    augment=True,
 )
 
 # Test model inference with images
@@ -416,9 +430,8 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | `--output-name` | Output dataset folder name | `classification` |
 | `--localization-model-path` | Path to trained localization model (optional) | None |
 | `--model-variant` | ConvNext variant for localization | `base` |
-| `--crop-size` | Output size of cropped IVD regions in pixels (H W) | `224 224` |
-| `--crop-size-mm` | Symmetric crop region size in millimeters (H W) | `50.0 50.0` |
-| `--crop-delta-mm` | Custom asymmetric crop region deltas (left right top bottom) from center in mm | None |
+| `--crop-size` | Output size of cropped IVD regions in pixels (H W) | `128 128` |
+| `--crop-delta` | Crop region deltas (left right top bottom) in pixels | `96 32 64 64` |
 | `--image-size` | Input image size for localization model (H W) | `224 224` |
 | `--include-phenikaa` | Include Phenikaa dataset | `True` |
 | `--include-spider` | Include SPIDER dataset | `True` |
@@ -490,13 +503,9 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 |------|-------------|---------|
 | `--data-path` | Classification dataset path | `data/processed/classification` |
 | `--output-path` | Training output directory | `weights/classification/<run_id>` |
-| `--use-preextracted-crops` | Use CropOnlyDataset with pre-extracted crops | `False` |
-| `--crop-size` | Size of crop from original image (pixels) | `128` |
 | `--output-size` | Final input size to model (H W) | `224 224` |
-| `--localization-size` | Size used by localization model (H W) | `224 224` |
-| `--t1-subdir` | Subdirectory for T1 images | `sag_t1` |
-| `--t2-subdir` | Subdirectory for T2 images | `sag_t2` |
 | `--levels` | Filter IVD levels (e.g., `L4/L5 L5/S1`) | None |
+| `--pretrained` | Use ImageNet pretrained weights | `True` |
 | `--dropout` | Dropout rate | `0.3` |
 | `--freeze-backbone-epochs` | Epochs to freeze backbone | `0` |
 | `--label-smoothing` | Label smoothing for cross-entropy | `0.1` |
@@ -507,6 +516,7 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | `--mixed-precision` | Use mixed precision training | `True` |
 | `--early-stopping` | Enable early stopping | `True` |
 | `--patience` | Early stopping patience | `20` |
+| `--visualize-predictions` | Generate prediction visualizations | `True` |
 | `--use-wandb` | Enable wandb logging | `False` |
 | `--wandb-project` | Wandb project name | `spine-vision` |
 | `-v, --verbose` | Debug logging | `False` |
@@ -647,8 +657,12 @@ No test suite currently configured. When adding tests:
 uv run pyright spine_vision
 ```
 
-## Linting
+## Linting (REQUIRED)
+
+**IMPORTANT**: Always run the linter after making code changes.
 
 ```bash
 uv run ruff check --fix spine_vision
 ```
+
+> Agents MUST run this command after modifying any Python files. Fix all linting errors before completing tasks.

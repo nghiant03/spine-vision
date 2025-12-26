@@ -311,6 +311,167 @@ class ClassificationMetrics(BaseMetrics):
         return metrics
 
 
+class MTLClassificationMetrics:
+    """Metrics calculator for multi-task classification.
+
+    Computes metrics for each task head:
+    - Pfirrmann: 5-class accuracy
+    - Modic: 4-class accuracy
+    - Binary heads: AUC, F1, Precision, Recall
+    """
+
+    def __init__(self) -> None:
+        """Initialize metrics for all heads."""
+        self.pfirrmann_metrics = ClassificationMetrics(
+            num_classes=5,
+            class_names=[f"Grade_{i+1}" for i in range(5)],
+        )
+        self.modic_metrics = ClassificationMetrics(
+            num_classes=4,
+            class_names=[f"Type_{i}" for i in range(4)],
+        )
+
+        # Accumulators for binary heads
+        self._herniation_preds: list[np.ndarray] = []
+        self._herniation_targets: list[np.ndarray] = []
+        self._endplate_preds: list[np.ndarray] = []
+        self._endplate_targets: list[np.ndarray] = []
+        self._spondy_preds: list[np.ndarray] = []
+        self._spondy_targets: list[np.ndarray] = []
+        self._narrowing_preds: list[np.ndarray] = []
+        self._narrowing_targets: list[np.ndarray] = []
+
+    def reset(self) -> None:
+        """Reset all accumulators."""
+        self.pfirrmann_metrics.reset()
+        self.modic_metrics.reset()
+        self._herniation_preds = []
+        self._herniation_targets = []
+        self._endplate_preds = []
+        self._endplate_targets = []
+        self._spondy_preds = []
+        self._spondy_targets = []
+        self._narrowing_preds = []
+        self._narrowing_targets = []
+
+    def update(
+        self,
+        predictions: Any,  # MTLPredictions
+        targets: Any,  # MTLTargets
+    ) -> None:
+        """Accumulate predictions from a batch."""
+        # Multiclass heads
+        pfirrmann_pred = predictions.pfirrmann.argmax(dim=1).cpu().numpy()
+        modic_pred = predictions.modic.argmax(dim=1).cpu().numpy()
+
+        self.pfirrmann_metrics.update(
+            pfirrmann_pred,
+            targets.pfirrmann.cpu().numpy(),
+        )
+        self.modic_metrics.update(
+            modic_pred,
+            targets.modic.cpu().numpy(),
+        )
+
+        # Binary heads (sigmoid probabilities)
+        self._herniation_preds.append(
+            torch.sigmoid(predictions.herniation).cpu().numpy()
+        )
+        self._herniation_targets.append(targets.herniation.cpu().numpy())
+
+        self._endplate_preds.append(
+            torch.sigmoid(predictions.endplate).cpu().numpy()
+        )
+        self._endplate_targets.append(targets.endplate.cpu().numpy())
+
+        self._spondy_preds.append(
+            torch.sigmoid(predictions.spondy).cpu().numpy()
+        )
+        self._spondy_targets.append(targets.spondy.cpu().numpy())
+
+        self._narrowing_preds.append(
+            torch.sigmoid(predictions.narrowing).cpu().numpy()
+        )
+        self._narrowing_targets.append(targets.narrowing.cpu().numpy())
+
+    def compute(self) -> dict[str, float]:
+        """Compute all metrics."""
+        metrics: dict[str, float] = {}
+
+        # Multiclass metrics
+        pfirrmann = self.pfirrmann_metrics.compute()
+        modic = self.modic_metrics.compute()
+
+        metrics["pfirrmann_accuracy"] = pfirrmann.get("accuracy", 0.0)
+        metrics["pfirrmann_balanced_acc"] = pfirrmann.get("balanced_accuracy", 0.0)
+        metrics["modic_accuracy"] = modic.get("accuracy", 0.0)
+        metrics["modic_balanced_acc"] = modic.get("balanced_accuracy", 0.0)
+
+        # Binary metrics
+        binary_heads = [
+            ("herniation", self._herniation_preds, self._herniation_targets, 2),
+            ("endplate", self._endplate_preds, self._endplate_targets, 2),
+            ("spondy", self._spondy_preds, self._spondy_targets, 1),
+            ("narrowing", self._narrowing_preds, self._narrowing_targets, 1),
+        ]
+
+        for name, preds_list, targets_list, n_outputs in binary_heads:
+            if not preds_list:
+                continue
+
+            preds = np.concatenate(preds_list, axis=0)
+            targets = np.concatenate(targets_list, axis=0)
+
+            # Compute per-output metrics
+            for i in range(n_outputs):
+                if n_outputs == 1:
+                    p = preds.flatten()
+                    t = targets.flatten()
+                    suffix = ""
+                else:
+                    p = preds[:, i]
+                    t = targets[:, i]
+                    suffix = f"_{i}"
+
+                # Binary predictions
+                pred_binary = (p > 0.5).astype(int)
+                t_binary = t.astype(int)
+
+                # Accuracy
+                acc = np.mean(pred_binary == t_binary) * 100
+                metrics[f"{name}{suffix}_accuracy"] = float(acc)
+
+                # Precision, Recall, F1
+                tp = np.sum((pred_binary == 1) & (t_binary == 1))
+                fp = np.sum((pred_binary == 1) & (t_binary == 0))
+                fn = np.sum((pred_binary == 0) & (t_binary == 1))
+
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                f1 = (
+                    2 * precision * recall / (precision + recall)
+                    if (precision + recall) > 0
+                    else 0.0
+                )
+
+                metrics[f"{name}{suffix}_precision"] = float(precision)
+                metrics[f"{name}{suffix}_recall"] = float(recall)
+                metrics[f"{name}{suffix}_f1"] = float(f1)
+
+        # Overall average accuracy
+        accs = [
+            metrics.get("pfirrmann_accuracy", 0),
+            metrics.get("modic_accuracy", 0),
+            metrics.get("herniation_0_accuracy", metrics.get("herniation_accuracy", 0)),
+            metrics.get("endplate_0_accuracy", metrics.get("endplate_accuracy", 0)),
+            metrics.get("spondy_accuracy", 0),
+            metrics.get("narrowing_accuracy", 0),
+        ]
+        metrics["overall_accuracy"] = float(np.mean(accs))
+
+        return metrics
+
+
 class RegressionMetrics(BaseMetrics):
     """Metrics for general regression tasks.
 

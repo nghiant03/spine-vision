@@ -6,7 +6,6 @@ Provides concrete trainer implementations for different tasks.
 from spine_vision.training.trainers.classification import (
     ClassificationConfig,
     ClassificationTrainer,
-    MTLClassificationMetrics,
 )
 from spine_vision.training.trainers.localization import (
     LocalizationConfig,
@@ -18,5 +17,4 @@ __all__ = [
     "LocalizationTrainer",
     "ClassificationConfig",
     "ClassificationTrainer",
-    "MTLClassificationMetrics",
 ]

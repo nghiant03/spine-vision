@@ -13,7 +13,7 @@ Uses ResNet-50 backbone with separate classification heads for each task.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 import torch
@@ -48,6 +48,17 @@ class MTLTargets:
     spondy: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
     narrowing: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
 
+    def to(self, device: torch.device | str) -> "MTLTargets":
+        """Move all tensors to the specified device."""
+        return MTLTargets(
+            pfirrmann=self.pfirrmann.to(device),
+            modic=self.modic.to(device),
+            herniation=self.herniation.to(device),
+            endplate=self.endplate.to(device),
+            spondy=self.spondy.to(device),
+            narrowing=self.narrowing.to(device),
+        )
+
 
 class ResNet50MTL(BaseModel):
     """ResNet-50 Multi-Task Learning model for lumbar spine classification.
@@ -80,6 +91,7 @@ class ResNet50MTL(BaseModel):
         dropout: float = 0.3,
         freeze_backbone: bool = False,
         label_smoothing: float = 0.1,
+        class_weights: dict[str, torch.Tensor] | None = None,
     ) -> None:
         """Initialize ResNet50MTL.
         
@@ -88,6 +100,10 @@ class ResNet50MTL(BaseModel):
             dropout: Dropout rate before classification heads.
             freeze_backbone: Freeze backbone weights initially.
             label_smoothing: Label smoothing for cross-entropy losses.
+            class_weights: Optional class weights for imbalanced data.
+                Keys: pfirrmann, modic, herniation, endplate, spondy, narrowing.
+                For multiclass (pfirrmann, modic): weight tensor for CrossEntropyLoss.
+                For binary tasks: pos_weight tensor for BCEWithLogitsLoss.
         """
         super().__init__()
         
@@ -95,6 +111,7 @@ class ResNet50MTL(BaseModel):
         self._dropout_rate = dropout
         self._freeze_backbone = freeze_backbone
         self._label_smoothing = label_smoothing
+        self._class_weights = class_weights
         
         # Load pretrained ResNet-50 via timm (no classification head)
         self.backbone = timm.create_model(
@@ -118,15 +135,51 @@ class ResNet50MTL(BaseModel):
         self.head_spondy = nn.Linear(feature_dim, 1)  # Yes/No
         self.head_narrowing = nn.Linear(feature_dim, 1)  # Yes/No
         
-        # Loss functions
-        self._ce_loss = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-        self._bce_loss = nn.BCEWithLogitsLoss()
+        # Loss functions with optional class weights
+        self._init_loss_functions(label_smoothing, class_weights)
         
         # Freeze backbone if requested
         if freeze_backbone:
             self.freeze_backbone()
         
         self._is_initialized = True
+
+    def _init_loss_functions(
+        self,
+        label_smoothing: float,
+        class_weights: dict[str, torch.Tensor] | None,
+    ) -> None:
+        """Initialize loss functions with optional class weights."""
+        if class_weights is None:
+            # Standard losses without weighting
+            self._ce_pfirrmann = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+            self._ce_modic = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+            self._bce_herniation = nn.BCEWithLogitsLoss()
+            self._bce_endplate = nn.BCEWithLogitsLoss()
+            self._bce_spondy = nn.BCEWithLogitsLoss()
+            self._bce_narrowing = nn.BCEWithLogitsLoss()
+        else:
+            # Weighted losses for imbalanced data
+            self._ce_pfirrmann = nn.CrossEntropyLoss(
+                weight=class_weights.get("pfirrmann"),
+                label_smoothing=label_smoothing,
+            )
+            self._ce_modic = nn.CrossEntropyLoss(
+                weight=class_weights.get("modic"),
+                label_smoothing=label_smoothing,
+            )
+            self._bce_herniation = nn.BCEWithLogitsLoss(
+                pos_weight=class_weights.get("herniation"),
+            )
+            self._bce_endplate = nn.BCEWithLogitsLoss(
+                pos_weight=class_weights.get("endplate"),
+            )
+            self._bce_spondy = nn.BCEWithLogitsLoss(
+                pos_weight=class_weights.get("spondy"),
+            )
+            self._bce_narrowing = nn.BCEWithLogitsLoss(
+                pos_weight=class_weights.get("narrowing"),
+            )
     
     @property
     def name(self) -> str:
@@ -186,14 +239,14 @@ class ResNet50MTL(BaseModel):
             )
         
         # CrossEntropy for multiclass
-        loss_pfirrmann = self._ce_loss(predictions.pfirrmann, targets.pfirrmann)
-        loss_modic = self._ce_loss(predictions.modic, targets.modic)
+        loss_pfirrmann = self._ce_pfirrmann(predictions.pfirrmann, targets.pfirrmann)
+        loss_modic = self._ce_modic(predictions.modic, targets.modic)
         
         # BCEWithLogits for binary/multi-label
-        loss_herniation = self._bce_loss(predictions.herniation, targets.herniation)
-        loss_endplate = self._bce_loss(predictions.endplate, targets.endplate)
-        loss_spondy = self._bce_loss(predictions.spondy, targets.spondy)
-        loss_narrowing = self._bce_loss(predictions.narrowing, targets.narrowing)
+        loss_herniation = self._bce_herniation(predictions.herniation, targets.herniation)
+        loss_endplate = self._bce_endplate(predictions.endplate, targets.endplate)
+        loss_spondy = self._bce_spondy(predictions.spondy, targets.spondy)
+        loss_narrowing = self._bce_narrowing(predictions.narrowing, targets.narrowing)
         
         # Sum all losses (equal weighting)
         total_loss = (
@@ -217,12 +270,12 @@ class ResNet50MTL(BaseModel):
         Useful for logging and debugging.
         """
         return {
-            "pfirrmann": self._ce_loss(predictions.pfirrmann, targets.pfirrmann),
-            "modic": self._ce_loss(predictions.modic, targets.modic),
-            "herniation": self._bce_loss(predictions.herniation, targets.herniation),
-            "endplate": self._bce_loss(predictions.endplate, targets.endplate),
-            "spondy": self._bce_loss(predictions.spondy, targets.spondy),
-            "narrowing": self._bce_loss(predictions.narrowing, targets.narrowing),
+            "pfirrmann": self._ce_pfirrmann(predictions.pfirrmann, targets.pfirrmann),
+            "modic": self._ce_modic(predictions.modic, targets.modic),
+            "herniation": self._bce_herniation(predictions.herniation, targets.herniation),
+            "endplate": self._bce_endplate(predictions.endplate, targets.endplate),
+            "spondy": self._bce_spondy(predictions.spondy, targets.spondy),
+            "narrowing": self._bce_narrowing(predictions.narrowing, targets.narrowing),
         }
     
     def freeze_backbone(self) -> None:

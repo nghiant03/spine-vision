@@ -10,7 +10,7 @@ with optional wandb logging for experiment tracking.
 
 Exports:
     - Base classes: BaseTrainer, BaseModel, TrainingConfig
-    - Datasets: IVDCoordsDataset, ClassificationDataset, CropOnlyDataset
+    - Datasets: IVDCoordsDataset, ClassificationDataset
     - Models: ConvNextLocalization, ConvNextClassifier, VisionTransformerLocalization, ResNet50MTL
     - Trainers: LocalizationTrainer, LocalizationConfig, ClassificationTrainer, ClassificationConfig
     - Metrics: LocalizationMetrics, MTLClassificationMetrics
@@ -25,10 +25,9 @@ from spine_vision.training.base import (
 )
 from spine_vision.training.datasets import (
     ClassificationDataset,
-    CropOnlyDataset,
     IVDCoordsDataset,
 )
-from spine_vision.training.metrics import LocalizationMetrics
+from spine_vision.training.metrics import LocalizationMetrics, MTLClassificationMetrics
 from spine_vision.training.models import (
     ConvNextClassifier,
     ConvNextLocalization,
@@ -42,7 +41,6 @@ from spine_vision.training.trainers import (
     ClassificationTrainer,
     LocalizationConfig,
     LocalizationTrainer,
-    MTLClassificationMetrics,
 )
 from spine_vision.training.visualization import TrainingVisualizer
 
@@ -55,7 +53,6 @@ __all__ = [
     # Datasets
     "IVDCoordsDataset",
     "ClassificationDataset",
-    "CropOnlyDataset",
     # Models
     "ConvNextLocalization",
     "ConvNextClassifier",
