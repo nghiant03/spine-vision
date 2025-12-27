@@ -318,8 +318,8 @@ class MultiTaskClassifier(BaseModel):
                 head = nn.Linear(feature_dim, task.num_classes)
             self.heads[task.name] = head
 
-        # Initialize loss functions
-        self._loss_functions: dict[str, nn.Module] = {}
+        # Initialize loss functions (use ModuleDict so they move to GPU with model)
+        self._loss_functions: nn.ModuleDict = nn.ModuleDict()
         self._loss_weights: dict[str, float] = {}
         self._init_loss_functions(tasks)
 

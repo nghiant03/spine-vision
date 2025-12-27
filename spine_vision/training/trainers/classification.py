@@ -254,7 +254,7 @@ class ClassificationTrainer(
         sample_images: list[np.ndarray] = []
 
         with torch.no_grad():
-            for batch_idx, batch in enumerate(self.val_loader):  # type: ignore[union-attr]
+            for _, batch in enumerate(self.val_loader):  # type: ignore[union-attr]
                 inputs = batch["image"]
                 targets: MTLTargets = batch["targets"].to(self.accelerator.device)
 
@@ -287,8 +287,8 @@ class ClassificationTrainer(
 
     def _compute_metrics(
         self,
-        predictions: torch.Tensor,
-        targets: torch.Tensor,
+        _: torch.Tensor,
+        __: torch.Tensor,
     ) -> dict[str, float]:
         """Compute metrics (placeholder for base class compatibility)."""
         return {}
@@ -330,7 +330,7 @@ class ClassificationTrainer(
             unwrapped_model.unfreeze_backbone()
             self._backbone_unfrozen = True
 
-    def on_train_end(self, result: TrainingResult) -> None:
+    def on_train_end(self, _: TrainingResult) -> None:
         """Generate final visualizations."""
         if self.accelerator.is_main_process:
             self._generate_final_visualizations()
