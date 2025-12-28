@@ -310,9 +310,14 @@ def process_phenikaa(
                 logger.debug(f"Patient directory not found: {patient_dir}")
                 continue
 
-            for series_name, series_type in [("SAG T1", "sag_t1"), ("SAG T2", "sag_t2")]:
-                series_dir = patient_dir / series_name
-                if not series_dir.exists():
+            for series_pattern, series_type in [("sag t1", "sag_t1"), ("sag t2", "sag_t2")]:
+                # Case-insensitive folder matching (handles "SAG T1", "Sag T1", "SagT1", etc.)
+                series_dir = None
+                for subdir in patient_dir.iterdir():
+                    if subdir.is_dir() and subdir.name.lower().replace(" ", "") == series_pattern.replace(" ", ""):
+                        series_dir = subdir
+                        break
+                if series_dir is None:
                     continue
 
                 try:

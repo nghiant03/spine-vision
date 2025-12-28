@@ -38,6 +38,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "transformers>=4.48.0",
     "tyro>=0.9.35",
+    "pymupdf>=1.24.0",
     "unidecode>=1.4.0",
     "vietocr>=0.3.13",
     "xlrd>=2.0.2",

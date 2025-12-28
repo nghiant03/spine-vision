@@ -139,6 +139,46 @@ def find_matching_folder(
     return top_matches[0]["path"] if top_matches else None
 
 
+def find_matching_folder_by_name(
+    patient_name: str,
+    folder_map: dict[str, FolderInfo],
+    threshold: float = 85,
+) -> Path | None:
+    """Find the best matching image folder by name only.
+
+    Matches by name similarity without birth year tiebreaker.
+    Used when birthday is not available.
+
+    Args:
+        patient_name: Patient's name.
+        folder_map: Dictionary from build_folder_lookup().
+        threshold: Minimum fuzzy match score.
+
+    Returns:
+        Path to matching folder, or None if no match found.
+    """
+    candidates = []
+
+    for key, data in folder_map.items():
+        score = fuzz.partial_ratio(patient_name, data["name_part"])
+
+        if score > threshold:
+            candidates.append(
+                {
+                    "key": key,
+                    "score": score,
+                    "path": data["path"],
+                }
+            )
+
+    if not candidates:
+        return None
+
+    # Return the best match by score
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    return candidates[0]["path"]
+
+
 class PatientMatcher:
     """Matches patients from OCR data to image folders.
 
@@ -164,7 +204,7 @@ class PatientMatcher:
         logger.info(f"Built folder lookup with {len(self.folder_map)} entries")
 
     def match(self, patient_name: str, patient_birthday: str) -> Path | None:
-        """Find matching folder for a patient.
+        """Find matching folder for a patient using name and birthday.
 
         Args:
             patient_name: Patient's name.
@@ -179,4 +219,21 @@ class PatientMatcher:
             self.folder_map,
             self.threshold,
             self.date_format,
+        )
+
+    def match_by_name(self, patient_name: str) -> Path | None:
+        """Find matching folder for a patient using name only.
+
+        Used when birthday is not available (e.g., patient-named reports).
+
+        Args:
+            patient_name: Patient's name.
+
+        Returns:
+            Path to matching image folder, or None.
+        """
+        return find_matching_folder_by_name(
+            patient_name,
+            self.folder_map,
+            self.threshold,
         )

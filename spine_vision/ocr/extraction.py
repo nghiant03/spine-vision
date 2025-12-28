@@ -7,8 +7,14 @@ import numpy as np
 from loguru import logger
 from PIL import Image
 
+from spine_vision.io.pdf import pdf_first_page_to_array
 from spine_vision.ocr.detection import TextDetector
 from spine_vision.ocr.recognition import TextRecognizer
+
+# Supported file extensions
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"}
+PDF_EXTENSIONS = {".pdf"}
+SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | PDF_EXTENSIONS
 
 
 def crop_polygon(image_np: np.ndarray, points: np.ndarray) -> Image.Image:
@@ -56,7 +62,7 @@ class DocumentExtractor:
     """Extract text fields from medical documents.
 
     Combines text detection and recognition to extract all text
-    from a document image.
+    from document images or PDFs.
     """
 
     def __init__(
@@ -65,6 +71,7 @@ class DocumentExtractor:
         recognition_model: str = "vgg_transformer",
         device: str = "cuda:0",
         use_gpu: bool = True,
+        pdf_dpi: int = 200,
     ) -> None:
         """Initialize document extractor.
 
@@ -73,18 +80,46 @@ class DocumentExtractor:
             recognition_model: VietOCR recognition model name.
             device: Device for recognition model.
             use_gpu: Whether to use GPU for detection.
+            pdf_dpi: DPI for rendering PDF pages.
         """
         self.detector = TextDetector(detection_model, use_gpu)
         self.recognizer = TextRecognizer(recognition_model, device)
+        self.pdf_dpi = pdf_dpi
 
-    def extract(self, image_path: Path) -> list[str]:
-        """Extract all text lines from a document image.
+    def extract(self, document_path: Path) -> list[str]:
+        """Extract all text lines from a document (image or PDF).
 
         Args:
-            image_path: Path to document image.
+            document_path: Path to document file (image or PDF).
 
         Returns:
             List of recognized text strings, one per detected region.
+
+        Raises:
+            ValueError: If file extension is not supported.
+        """
+        suffix = document_path.suffix.lower()
+
+        if suffix not in SUPPORTED_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported file extension: {suffix}. "
+                f"Supported: {SUPPORTED_EXTENSIONS}"
+            )
+
+        if suffix in PDF_EXTENSIONS:
+            image_np = pdf_first_page_to_array(document_path, dpi=self.pdf_dpi)
+            return self._extract_from_array(image_np, str(document_path))
+        else:
+            return self._extract_from_image_file(document_path)
+
+    def _extract_from_image_file(self, image_path: Path) -> list[str]:
+        """Extract text from an image file.
+
+        Args:
+            image_path: Path to image file.
+
+        Returns:
+            List of recognized text strings.
         """
         boxes = self.detector.detect(image_path)
 
@@ -103,11 +138,14 @@ class DocumentExtractor:
 
         return text_lines
 
-    def extract_from_array(self, image: np.ndarray) -> list[str]:
-        """Extract all text lines from an image array.
+    def _extract_from_array(
+        self, image: np.ndarray, source_name: str = "array"
+    ) -> list[str]:
+        """Extract text from an image array.
 
         Args:
             image: Image as numpy array (RGB).
+            source_name: Name for logging.
 
         Returns:
             List of recognized text strings.
@@ -115,6 +153,7 @@ class DocumentExtractor:
         boxes = self.detector.detect_from_array(image)
 
         if not boxes:
+            logger.debug(f"No text detected in {source_name}")
             return []
 
         text_lines = []
@@ -124,3 +163,33 @@ class DocumentExtractor:
             text_lines.append(text)
 
         return text_lines
+
+    def extract_from_array(self, image: np.ndarray) -> list[str]:
+        """Extract all text lines from an image array.
+
+        Args:
+            image: Image as numpy array (RGB).
+
+        Returns:
+            List of recognized text strings.
+        """
+        return self._extract_from_array(image)
+
+    def extract_from_pdf_crop(
+        self,
+        pdf_path: Path,
+        crop_region: tuple[int, int, int, int],
+    ) -> list[str]:
+        """Extract text from a cropped region of a PDF's first page.
+
+        Args:
+            pdf_path: Path to PDF file.
+            crop_region: Crop box as (x1, y1, x2, y2) in pixels.
+
+        Returns:
+            List of recognized text strings from the cropped region.
+        """
+        image_np = pdf_first_page_to_array(pdf_path, dpi=self.pdf_dpi)
+        x1, y1, x2, y2 = crop_region
+        cropped = image_np[y1:y2, x1:x2]
+        return self._extract_from_array(cropped, f"{pdf_path} (cropped)")
