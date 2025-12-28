@@ -34,7 +34,7 @@ def _create_lumbar_spine_tasks(
         class_weights: Dict mapping task names to class weight tensors.
 
     Returns:
-        List of TaskConfig for the 6 lumbar spine classification tasks.
+        List of TaskConfig for the 8 lumbar spine classification tasks.
     """
     cw = class_weights or {}
 
@@ -55,15 +55,27 @@ def _create_lumbar_spine_tasks(
         ),
         TaskConfig(
             name="herniation",
-            num_classes=2,
-            task_type="multilabel",
+            num_classes=1,
+            task_type="binary",
             class_weights=cw.get("herniation"),
         ),
         TaskConfig(
-            name="endplate",
-            num_classes=2,
-            task_type="multilabel",
-            class_weights=cw.get("endplate"),
+            name="bulging",
+            num_classes=1,
+            task_type="binary",
+            class_weights=cw.get("bulging"),
+        ),
+        TaskConfig(
+            name="upper_endplate",
+            num_classes=1,
+            task_type="binary",
+            class_weights=cw.get("upper_endplate"),
+        ),
+        TaskConfig(
+            name="lower_endplate",
+            num_classes=1,
+            task_type="binary",
+            class_weights=cw.get("lower_endplate"),
         ),
         TaskConfig(
             name="spondy",

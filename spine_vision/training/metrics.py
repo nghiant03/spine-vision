@@ -334,8 +334,12 @@ class MTLClassificationMetrics:
         # Accumulators for binary heads
         self._herniation_preds: list[np.ndarray] = []
         self._herniation_targets: list[np.ndarray] = []
-        self._endplate_preds: list[np.ndarray] = []
-        self._endplate_targets: list[np.ndarray] = []
+        self._bulging_preds: list[np.ndarray] = []
+        self._bulging_targets: list[np.ndarray] = []
+        self._upper_endplate_preds: list[np.ndarray] = []
+        self._upper_endplate_targets: list[np.ndarray] = []
+        self._lower_endplate_preds: list[np.ndarray] = []
+        self._lower_endplate_targets: list[np.ndarray] = []
         self._spondy_preds: list[np.ndarray] = []
         self._spondy_targets: list[np.ndarray] = []
         self._narrowing_preds: list[np.ndarray] = []
@@ -347,8 +351,12 @@ class MTLClassificationMetrics:
         self.modic_metrics.reset()
         self._herniation_preds = []
         self._herniation_targets = []
-        self._endplate_preds = []
-        self._endplate_targets = []
+        self._bulging_preds = []
+        self._bulging_targets = []
+        self._upper_endplate_preds = []
+        self._upper_endplate_targets = []
+        self._lower_endplate_preds = []
+        self._lower_endplate_targets = []
         self._spondy_preds = []
         self._spondy_targets = []
         self._narrowing_preds = []
@@ -395,10 +403,20 @@ class MTLClassificationMetrics:
         )
         self._herniation_targets.append(get_target("herniation").cpu().numpy())
 
-        self._endplate_preds.append(
-            torch.sigmoid(get_pred("endplate")).cpu().numpy()
+        self._bulging_preds.append(
+            torch.sigmoid(get_pred("bulging")).cpu().numpy()
         )
-        self._endplate_targets.append(get_target("endplate").cpu().numpy())
+        self._bulging_targets.append(get_target("bulging").cpu().numpy())
+
+        self._upper_endplate_preds.append(
+            torch.sigmoid(get_pred("upper_endplate")).cpu().numpy()
+        )
+        self._upper_endplate_targets.append(get_target("upper_endplate").cpu().numpy())
+
+        self._lower_endplate_preds.append(
+            torch.sigmoid(get_pred("lower_endplate")).cpu().numpy()
+        )
+        self._lower_endplate_targets.append(get_target("lower_endplate").cpu().numpy())
 
         self._spondy_preds.append(
             torch.sigmoid(get_pred("spondy")).cpu().numpy()
@@ -425,8 +443,10 @@ class MTLClassificationMetrics:
 
         # Binary metrics
         binary_heads = [
-            ("herniation", self._herniation_preds, self._herniation_targets, 2),
-            ("endplate", self._endplate_preds, self._endplate_targets, 2),
+            ("herniation", self._herniation_preds, self._herniation_targets, 1),
+            ("bulging", self._bulging_preds, self._bulging_targets, 1),
+            ("upper_endplate", self._upper_endplate_preds, self._upper_endplate_targets, 1),
+            ("lower_endplate", self._lower_endplate_preds, self._lower_endplate_targets, 1),
             ("spondy", self._spondy_preds, self._spondy_targets, 1),
             ("narrowing", self._narrowing_preds, self._narrowing_targets, 1),
         ]
@@ -478,8 +498,10 @@ class MTLClassificationMetrics:
         accs = [
             metrics.get("pfirrmann_accuracy", 0),
             metrics.get("modic_accuracy", 0),
-            metrics.get("herniation_0_accuracy", metrics.get("herniation_accuracy", 0)),
-            metrics.get("endplate_0_accuracy", metrics.get("endplate_accuracy", 0)),
+            metrics.get("herniation_accuracy", 0),
+            metrics.get("bulging_accuracy", 0),
+            metrics.get("upper_endplate_accuracy", 0),
+            metrics.get("lower_endplate_accuracy", 0),
             metrics.get("spondy_accuracy", 0),
             metrics.get("narrowing_accuracy", 0),
         ]

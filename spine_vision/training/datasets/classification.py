@@ -343,14 +343,10 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             # Pfirrmann: convert 1-5 to 0-4 for CrossEntropy
             "pfirrmann": record["pfirrmann"] - 1,
             "modic": record["modic"],
-            "herniation": [
-                float(record["herniation"]),
-                float(record["bulging"]),
-            ],
-            "endplate": [
-                float(record["upper_endplate"]),
-                float(record["lower_endplate"]),
-            ],
+            "herniation": [float(record["herniation"])],
+            "bulging": [float(record["bulging"])],
+            "upper_endplate": [float(record["upper_endplate"])],
+            "lower_endplate": [float(record["lower_endplate"])],
             "spondy": [float(record["spondylolisthesis"])],
             "narrowing": [float(record["narrowing"])],
         }
@@ -394,8 +390,10 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             Dictionary with class weights for each task:
                 - pfirrmann: [5] tensor for 5 grades
                 - modic: [4] tensor for 4 types
-                - herniation: [2] tensor (pos_weight for herniation, bulging)
-                - endplate: [2] tensor (pos_weight for upper, lower)
+                - herniation: [1] tensor (pos_weight)
+                - bulging: [1] tensor (pos_weight)
+                - upper_endplate: [1] tensor (pos_weight)
+                - lower_endplate: [1] tensor (pos_weight)
                 - spondy: [1] tensor (pos_weight)
                 - narrowing: [1] tensor (pos_weight)
         """
@@ -429,14 +427,10 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             n_neg = n_samples - n_pos
             return n_neg / max(n_pos, 1)  # Avoid division by zero
 
-        herniation_weights = torch.tensor([
-            pos_weight(herniation_pos),
-            pos_weight(bulging_pos),
-        ])
-        endplate_weights = torch.tensor([
-            pos_weight(upper_endplate_pos),
-            pos_weight(lower_endplate_pos),
-        ])
+        herniation_weights = torch.tensor([pos_weight(herniation_pos)])
+        bulging_weights = torch.tensor([pos_weight(bulging_pos)])
+        upper_endplate_weights = torch.tensor([pos_weight(upper_endplate_pos)])
+        lower_endplate_weights = torch.tensor([pos_weight(lower_endplate_pos)])
         spondy_weights = torch.tensor([pos_weight(spondy_pos)])
         narrowing_weights = torch.tensor([pos_weight(narrowing_pos)])
 
@@ -444,7 +438,9 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             "pfirrmann": pfirrmann_weights,
             "modic": modic_weights,
             "herniation": herniation_weights,
-            "endplate": endplate_weights,
+            "bulging": bulging_weights,
+            "upper_endplate": upper_endplate_weights,
+            "lower_endplate": lower_endplate_weights,
             "spondy": spondy_weights,
             "narrowing": narrowing_weights,
         }
@@ -473,8 +469,16 @@ class ClassificationCollator:
             [s["targets"]["herniation"] for s in samples],
             dtype=torch.float32,
         )
-        endplate = torch.tensor(
-            [s["targets"]["endplate"] for s in samples],
+        bulging = torch.tensor(
+            [s["targets"]["bulging"] for s in samples],
+            dtype=torch.float32,
+        )
+        upper_endplate = torch.tensor(
+            [s["targets"]["upper_endplate"] for s in samples],
+            dtype=torch.float32,
+        )
+        lower_endplate = torch.tensor(
+            [s["targets"]["lower_endplate"] for s in samples],
             dtype=torch.float32,
         )
         spondy = torch.tensor(
@@ -490,7 +494,9 @@ class ClassificationCollator:
             pfirrmann=pfirrmann,
             modic=modic,
             herniation=herniation,
-            endplate=endplate,
+            bulging=bulging,
+            upper_endplate=upper_endplate,
+            lower_endplate=lower_endplate,
             spondy=spondy,
             narrowing=narrowing,
         )

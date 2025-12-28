@@ -73,8 +73,10 @@ class TaskConfig:
 LUMBAR_SPINE_TASKS: list[TaskConfig] = [
     TaskConfig(name="pfirrmann", num_classes=5, task_type="multiclass", label_smoothing=0.1),
     TaskConfig(name="modic", num_classes=4, task_type="multiclass", label_smoothing=0.1),
-    TaskConfig(name="herniation", num_classes=2, task_type="multilabel"),
-    TaskConfig(name="endplate", num_classes=2, task_type="multilabel"),
+    TaskConfig(name="herniation", num_classes=1, task_type="binary"),
+    TaskConfig(name="bulging", num_classes=1, task_type="binary"),
+    TaskConfig(name="upper_endplate", num_classes=1, task_type="binary"),
+    TaskConfig(name="lower_endplate", num_classes=1, task_type="binary"),
     TaskConfig(name="spondy", num_classes=1, task_type="binary"),
     TaskConfig(name="narrowing", num_classes=1, task_type="binary"),
 ]
@@ -84,13 +86,15 @@ LUMBAR_SPINE_TASKS: list[TaskConfig] = [
 class MTLTargets:
     """Container for multi-task targets.
 
-    For lumbar spine classification with 6 predefined tasks.
+    For lumbar spine classification with 8 predefined tasks.
     """
 
     pfirrmann: torch.Tensor  # [B] int64, values 0-4
     modic: torch.Tensor  # [B] int64, values 0-3
-    herniation: torch.Tensor  # [B, 2] float32, 0.0 or 1.0
-    endplate: torch.Tensor  # [B, 2] float32, 0.0 or 1.0
+    herniation: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
+    bulging: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
+    upper_endplate: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
+    lower_endplate: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
     spondy: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
     narrowing: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
 
@@ -100,7 +104,9 @@ class MTLTargets:
             pfirrmann=self.pfirrmann.to(device),
             modic=self.modic.to(device),
             herniation=self.herniation.to(device),
-            endplate=self.endplate.to(device),
+            bulging=self.bulging.to(device),
+            upper_endplate=self.upper_endplate.to(device),
+            lower_endplate=self.lower_endplate.to(device),
             spondy=self.spondy.to(device),
             narrowing=self.narrowing.to(device),
         )
@@ -111,7 +117,9 @@ class MTLTargets:
             "pfirrmann": self.pfirrmann,
             "modic": self.modic,
             "herniation": self.herniation,
-            "endplate": self.endplate,
+            "bulging": self.bulging,
+            "upper_endplate": self.upper_endplate,
+            "lower_endplate": self.lower_endplate,
             "spondy": self.spondy,
             "narrowing": self.narrowing,
         }

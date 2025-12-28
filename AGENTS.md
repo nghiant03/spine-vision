@@ -179,8 +179,9 @@ arr_uint8 = normalize_to_uint8(float_array)
 ```python
 from spine_vision.ocr import DocumentExtractor, crop_polygon
 
-extractor = DocumentExtractor(device="cuda:0")
-text_lines = extractor.extract(Path("report.png"))
+# Supports images (.png, .jpg, etc.) and PDFs
+extractor = DocumentExtractor(device="cuda:0", pdf_dpi=200)
+text_lines = extractor.extract(Path("report.pdf"))  # or .png
 ```
 
 ### Matching (`spine_vision.matching`)
@@ -193,6 +194,7 @@ name = fuzzy_value_extract(text_lines, "Ho ten nguoi benh", threshold=80)
 # Match patients to image folders
 matcher = PatientMatcher(image_path=Path("images/"), threshold=85)
 folder = matcher.match(patient_name, patient_birthday)
+folder = matcher.match_by_name(patient_name)  # When birthday unavailable
 ```
 
 ### Inference (`spine_vision.inference`)
@@ -237,7 +239,9 @@ convert_main(config)
 config = IVDDatasetConfig(base_path=Path("data"))
 ivd_main(config)
 
-# Phenikaa preprocessing
+# Phenikaa preprocessing (supports both report formats)
+# - ID-named reports (250010139.png): extracts name/birthday from OCR
+# - Patient-named reports (NGUYEN_VAN_SON_20250718.pdf): extracts ID from OCR
 config = PreprocessConfig(data_path=Path("data/raw/Phenikaa"))
 preprocess_main(config)
 
@@ -416,6 +420,10 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 ## CLI Options
 
 ### spine-vision dataset phenikaa
+Supports two report formats automatically:
+- **ID-named** (e.g., `250010139.png`): ID from filename, name/birthday from OCR
+- **Patient-named** (e.g., `NGUYEN_VAN_SON_20250718.pdf`): Name from filename, ID from OCR
+
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--data-path` | Input data directory | `data/raw/Phenikaa` |
@@ -425,6 +433,7 @@ visualizer.plot_error_distribution(predictions, targets, levels)
 | `--enable-file-log` | Write logs to file | `False` |
 | `--report-fuzzy-threshold` | OCR matching threshold | `80` |
 | `--image-fuzzy-threshold` | Folder matching threshold | `85` |
+| `--pdf-dpi` | DPI for PDF rendering | `200` |
 
 ### spine-vision dataset nnunet
 | Flag | Description | Default |
