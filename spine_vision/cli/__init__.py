@@ -25,8 +25,6 @@ from spine_vision.cli.evaluate import main as evaluate_main
 from spine_vision.cli.test import TestConfig
 from spine_vision.cli.test import main as test_main
 from spine_vision.cli.train import main as train_main
-from spine_vision.cli.visualize import VisualizeConfig
-from spine_vision.cli.visualize import main as visualize_main
 from spine_vision.datasets.classification import ClassificationDatasetConfig
 from spine_vision.datasets.classification import main as classification_main
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig
@@ -135,10 +133,6 @@ Command = Union[
         AnalyzeConfig,
         tyro.conf.subcommand("analyze", description="Analyze classification dataset"),
     ],
-    Annotated[
-        VisualizeConfig,
-        tyro.conf.subcommand("visualize", description="Visualize segmentation results"),
-    ],
 ]
 
 
@@ -169,8 +163,6 @@ def cli() -> None:
             evaluate_main(config)
         case AnalyzeConfig():
             analyze_main(config)
-        case VisualizeConfig():
-            visualize_main(config)
 
 
 if __name__ == "__main__":
