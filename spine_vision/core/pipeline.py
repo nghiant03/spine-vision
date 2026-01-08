@@ -5,7 +5,7 @@ from typing import Any
 
 from loguru import logger
 
-from spine_vision.core.logging import setup_logger
+from spine_vision.core.logging import add_file_log, setup_logger
 from spine_vision.inference.base import InferenceModel
 from spine_vision.io.readers import read_medical_image
 from spine_vision.io.writers import write_medical_image
@@ -29,7 +29,9 @@ class Pipeline:
         enable_file_log: bool = False,
         log_path: Path | None = None,
     ) -> None:
-        setup_logger(verbose, enable_file_log, log_path)
+        setup_logger(verbose)
+        if enable_file_log:
+            add_file_log(log_path)
         self.inference_model = inference_model
         self._results: dict[str, Any] = {}
 

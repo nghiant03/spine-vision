@@ -21,7 +21,7 @@ from pydantic import BaseModel, computed_field
 from tqdm.rich import tqdm
 from tqdm.std import TqdmExperimentalWarning
 
-from spine_vision.core.logging import setup_logger
+from spine_vision.core.logging import add_file_log, setup_logger
 from spine_vision.io.tabular import load_tabular_data
 from spine_vision.matching.fuzzy import fuzzy_value_extract
 from spine_vision.matching.patient import PatientMatcher
@@ -411,10 +411,10 @@ def main(config: PreprocessConfig) -> None:
 
     setup_logger(
         verbose=config.verbose,
-        enable_file_log=config.enable_file_log,
-        log_path=config.log_path,
-        log_filename="preprocess.log",
     )
+
+    if config.enable_file_log:
+        add_file_log()
 
     logger.debug("Started preprocessing.")
 

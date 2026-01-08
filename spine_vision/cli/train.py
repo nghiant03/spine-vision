@@ -4,7 +4,7 @@
 import tyro
 from loguru import logger
 
-from spine_vision.core.logging import setup_logger
+from spine_vision.core.logging import setup_logger, add_file_log
 from spine_vision.training.trainers.classification import (
     ClassificationConfig,
     ClassificationTrainer,
@@ -21,7 +21,9 @@ def main(config: LocalizationConfig | ClassificationConfig) -> None:
     Args:
         config: Training configuration (localization or classification).
     """
-    setup_logger(verbose=config.verbose, enable_file_log=config.enable_file_log)
+    setup_logger(verbose=config.verbose)
+    if config.enable_file_log:
+        add_file_log()
 
     if isinstance(config, LocalizationConfig):
         _train_localization(config)

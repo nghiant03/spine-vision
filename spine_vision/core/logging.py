@@ -9,9 +9,6 @@ from tqdm.rich import tqdm
 
 def setup_logger(
     verbose: bool = False,
-    enable_file_log: bool = False,
-    log_path: Path | None = None,
-    log_filename: str = "spine_vision.log",
 ) -> None:
     """Configure loguru logger with tqdm integration.
 
@@ -31,15 +28,20 @@ def setup_logger(
         level=log_level,
     )
 
-    if enable_file_log:
-        if log_path is None:
-            log_path = Path.cwd() / "logs"
-        log_path.mkdir(parents=True, exist_ok=True)
-        logger.add(
-            log_path / log_filename,
-            level="DEBUG",
-            rotation="10 MB",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} | {message}",
-            encoding="utf-8",
-        )
-        logger.info(f"Logging to {log_path}")
+def add_file_log(log_path: Path | str | None = None, log_filename: str = "spine_vision.log"):
+    if log_path is None:
+        log_path = Path.cwd() / "logs"
+
+    if isinstance(log_path, str):
+        log_path = Path(log_path)
+
+
+    log_path.mkdir(parents=True, exist_ok=True)
+    logger.add(
+        log_path / log_filename,
+        level="DEBUG",
+        rotation="10 MB",
+        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{line} | {message}",
+        encoding="utf-8",
+    )
+    logger.info(f"Logging to {log_path}")
