@@ -8,6 +8,8 @@ Usage:
     spine-vision train localization [OPTIONS]      # Train localization model
     spine-vision train classification [OPTIONS]    # Train classification model (MTL)
     spine-vision test [OPTIONS]                    # Test trained models
+    spine-vision evaluate [OPTIONS]                # Evaluate on test set with visualization
+    spine-vision analyze [OPTIONS]                 # Analyze classification dataset
     spine-vision visualize [OPTIONS]               # Visualize segmentation results
 """
 
@@ -16,6 +18,10 @@ from typing import Annotated, Union
 
 import tyro
 
+from spine_vision.cli.analyze import AnalyzeConfig
+from spine_vision.cli.analyze import main as analyze_main
+from spine_vision.cli.evaluate import EvaluateConfig
+from spine_vision.cli.evaluate import main as evaluate_main
 from spine_vision.cli.test import TestConfig
 from spine_vision.cli.test import main as test_main
 from spine_vision.cli.train import main as train_main
@@ -122,6 +128,14 @@ Command = Union[
         tyro.conf.subcommand("test", description="Test trained models with images or DICOM"),
     ],
     Annotated[
+        EvaluateConfig,
+        tyro.conf.subcommand("evaluate", description="Evaluate on test set with visualization"),
+    ],
+    Annotated[
+        AnalyzeConfig,
+        tyro.conf.subcommand("analyze", description="Analyze classification dataset"),
+    ],
+    Annotated[
         VisualizeConfig,
         tyro.conf.subcommand("visualize", description="Visualize segmentation results"),
     ],
@@ -151,6 +165,10 @@ def cli() -> None:
                     train_main(cmd)
         case TestConfig():
             test_main(config)
+        case EvaluateConfig():
+            evaluate_main(config)
+        case AnalyzeConfig():
+            analyze_main(config)
         case VisualizeConfig():
             visualize_main(config)
 

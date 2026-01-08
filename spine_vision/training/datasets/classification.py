@@ -3,6 +3,9 @@
 Loads pre-extracted IVD crops from the classification dataset CLI.
 Supports dual-modality (T1+T2) input construction with 3-channel output.
 
+Supports training on all labels (multi-task) or individual labels (single-task)
+via the `target_labels` parameter.
+
 Expected dataset structure (from `spine-vision dataset classification`):
     data_path/
         images/
@@ -29,8 +32,6 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-from spine_vision.training.models import MTLTargets
-
 
 # IVD level mapping (L1/L2 to L5/S1)
 LEVEL_TO_IDX = {
@@ -42,23 +43,60 @@ LEVEL_TO_IDX = {
 }
 IDX_TO_LEVEL = {v: k for k, v in LEVEL_TO_IDX.items()}
 
+# All available classification labels
+AVAILABLE_LABELS: tuple[str, ...] = (
+    "pfirrmann",
+    "modic",
+    "herniation",
+    "bulging",
+    "upper_endplate",
+    "lower_endplate",
+    "spondy",
+    "narrowing",
+)
+
+# Mapping from label names to their types and classes
+LABEL_INFO: dict[str, dict[str, Any]] = {
+    "pfirrmann": {"type": "multiclass", "num_classes": 5},
+    "modic": {"type": "multiclass", "num_classes": 4},
+    "herniation": {"type": "binary", "num_classes": 1},
+    "bulging": {"type": "binary", "num_classes": 1},
+    "upper_endplate": {"type": "binary", "num_classes": 1},
+    "lower_endplate": {"type": "binary", "num_classes": 1},
+    "spondy": {"type": "binary", "num_classes": 1},
+    "narrowing": {"type": "binary", "num_classes": 1},
+}
+
 
 def construct_3channel(
-    t2_crop: np.ndarray,
-    t1_crop: np.ndarray,
+    t2_crop: np.ndarray | None,
+    t1_crop: np.ndarray | None,
 ) -> np.ndarray:
-    """Construct 3-channel image from T1 and T2 crops.
+    """Construct 3-channel image from T1 and/or T2 crops.
 
-    Channel layout: [T2, T1, T2] (RGB-like).
+    Channel layout:
+        - Both T1 and T2: [T2, T1, T2] (RGB-like)
+        - T2 only: [T2, T2, T2]
+        - T1 only: [T1, T1, T1]
 
     Args:
-        t2_crop: T2 crop, shape (H, W), uint8.
-        t1_crop: T1 crop, shape (H, W), uint8.
+        t2_crop: T2 crop, shape (H, W), uint8. Can be None if T1 provided.
+        t1_crop: T1 crop, shape (H, W), uint8. Can be None if T2 provided.
 
     Returns:
         3-channel image, shape (H, W, 3), uint8.
+
+    Raises:
+        ValueError: If both crops are None.
     """
-    return np.stack([t2_crop, t1_crop, t2_crop], axis=-1)
+    if t2_crop is not None and t1_crop is not None:
+        return np.stack([t2_crop, t1_crop, t2_crop], axis=-1)
+    elif t2_crop is not None:
+        return np.stack([t2_crop, t2_crop, t2_crop], axis=-1)
+    elif t1_crop is not None:
+        return np.stack([t1_crop, t1_crop, t1_crop], axis=-1)
+    else:
+        raise ValueError("At least one of t2_crop or t1_crop must be provided")
 
 
 class ClassificationDataset(Dataset[dict[str, Any]]):
@@ -67,6 +105,9 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
     Loads crops created by the `spine-vision dataset classification` CLI command.
     Automatically pairs T1 and T2 crops for the same patient/level to create
     3-channel inputs.
+
+    Supports training on all labels (multi-task) or specific labels (single-task)
+    via the `target_labels` parameter.
 
     Expected directory structure:
         data_path/
@@ -85,6 +126,8 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
         val_ratio: float = 0.15,
         test_ratio: float = 0.05,
         levels: list[str] | None = None,
+        series_types: list[str] | None = None,
+        target_labels: list[str] | None = None,
         output_size: tuple[int, int] = (224, 224),
         augment: bool = True,
         normalize: bool = True,
@@ -98,16 +141,49 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             val_ratio: Fraction for validation.
             test_ratio: Fraction for testing.
             levels: Filter to specific IVD levels (e.g., ["L4/L5", "L5/S1"]).
+            series_types: Filter to specific series types (e.g., ["sag_t2"] for T2 only,
+                ["sag_t1", "sag_t2"] for both). If None, requires both T1 and T2.
+            target_labels: Filter to specific labels (e.g., ["pfirrmann", "modic"]).
+                If None, includes all labels.
             output_size: Final output size after resizing (H, W).
             augment: Apply data augmentation (training only).
             normalize: Apply ImageNet normalization.
             seed: Random seed for splitting.
+
+        Raises:
+            ValueError: If any target_label is not a valid label name.
+            ValueError: If any series_type is not valid.
         """
         self.data_path = Path(data_path)
         self.split = split
         self.output_size = output_size
         self.augment = augment and split == "train"
         self.normalize = normalize
+
+        # Validate and store series types
+        valid_series = {"sag_t1", "sag_t2"}
+        if series_types is not None:
+            invalid_series = set(series_types) - valid_series
+            if invalid_series:
+                raise ValueError(
+                    f"Invalid series types: {invalid_series}. "
+                    f"Valid types: {valid_series}"
+                )
+            self.series_types = set(series_types)
+        else:
+            self.series_types = valid_series  # Require both by default
+
+        # Validate and store target labels
+        if target_labels is not None:
+            invalid_labels = set(target_labels) - set(AVAILABLE_LABELS)
+            if invalid_labels:
+                raise ValueError(
+                    f"Invalid target labels: {invalid_labels}. "
+                    f"Available labels: {AVAILABLE_LABELS}"
+                )
+            self.target_labels = list(target_labels)
+        else:
+            self.target_labels = list(AVAILABLE_LABELS)
 
         # Load and process annotations
         self.records = self._load_and_pair_annotations()
@@ -187,11 +263,28 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
                 elif series_type == "sag_t2":
                     groups[key]["t2_path"] = image_path
 
-        # Second pass: keep only complete pairs (both T1 and T2)
+        # Second pass: filter based on series_types
+        require_t1 = "sag_t1" in self.series_types
+        require_t2 = "sag_t2" in self.series_types
+
         records = []
         for group in groups.values():
-            if group["t1_path"] is not None and group["t2_path"] is not None:
-                records.append(group)
+            has_t1 = group["t1_path"] is not None
+            has_t2 = group["t2_path"] is not None
+
+            # Check if sample meets requirements
+            if require_t1 and require_t2:
+                # Need both T1 and T2
+                if has_t1 and has_t2:
+                    records.append(group)
+            elif require_t1:
+                # T1 only mode
+                if has_t1:
+                    records.append(group)
+            elif require_t2:
+                # T2 only mode
+                if has_t2:
+                    records.append(group)
 
         return records
 
@@ -284,7 +377,6 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
         if self.augment:
             transform_list.extend(
                 [
-                    transforms.RandomHorizontalFlip(p=0.5),
                     transforms.RandomAffine(
                         degrees=10,
                         translate=(0.05, 0.05),
@@ -317,29 +409,37 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
 
         Returns:
             Dictionary with keys:
-                - image: 3-channel tensor [C, H, W] constructed as [T2, T1, T2]
-                - targets: Dict compatible with MTLTargets
+                - image: 3-channel tensor [C, H, W] constructed based on series_types:
+                    - Both T1+T2: [T2, T1, T2]
+                    - T2 only: [T2, T2, T2]
+                    - T1 only: [T1, T1, T1]
+                - targets: Dict with only the selected target labels
                 - level_idx: Level index (0-4)
                 - metadata: Dict with source, patient_id, level
         """
         record = self.records[idx]
 
-        # Load T1 and T2 crops
-        t1_img = Image.open(record["t1_path"]).convert("L")
-        t2_img = Image.open(record["t2_path"]).convert("L")
+        # Load T1 and/or T2 crops based on what's available
+        t1_arr = None
+        t2_arr = None
 
-        t1_arr = np.array(t1_img)
-        t2_arr = np.array(t2_img)
+        if record["t1_path"] is not None:
+            t1_img = Image.open(record["t1_path"]).convert("L")
+            t1_arr = np.array(t1_img)
 
-        # Construct 3-channel image [T2, T1, T2]
+        if record["t2_path"] is not None:
+            t2_img = Image.open(record["t2_path"]).convert("L")
+            t2_arr = np.array(t2_img)
+
+        # Construct 3-channel image
         rgb_image = construct_3channel(t2_arr, t1_arr)
 
         # Convert to PIL for transforms
         pil_image = Image.fromarray(rgb_image)
         image_tensor = self.transform(pil_image)
 
-        # Build targets
-        targets = {
+        # Build targets (only for selected labels)
+        all_targets = {
             # Pfirrmann: convert 1-5 to 0-4 for CrossEntropy
             "pfirrmann": record["pfirrmann"] - 1,
             "modic": record["modic"],
@@ -350,6 +450,9 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             "spondy": [float(record["spondylolisthesis"])],
             "narrowing": [float(record["narrowing"])],
         }
+
+        # Filter to only include target labels
+        targets = {k: v for k, v in all_targets.items() if k in self.target_labels}
 
         return {
             "image": image_tensor,
@@ -377,6 +480,8 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             "pfirrmann": dict(Counter(pfirrmann)),
             "modic": dict(Counter(modic)),
             "sources": dict(Counter(sources)),
+            "series_types": list(self.series_types),
+            "target_labels": self.target_labels,
             "split": self.split,
         }
 
@@ -386,120 +491,130 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
         Uses inverse frequency weighting: weight = n_samples / (n_classes * count).
         For binary tasks, computes pos_weight for BCEWithLogitsLoss.
 
+        Only computes weights for labels in `target_labels`.
+
         Returns:
-            Dictionary with class weights for each task:
-                - pfirrmann: [5] tensor for 5 grades
-                - modic: [4] tensor for 4 types
-                - herniation: [1] tensor (pos_weight)
-                - bulging: [1] tensor (pos_weight)
-                - upper_endplate: [1] tensor (pos_weight)
-                - lower_endplate: [1] tensor (pos_weight)
-                - spondy: [1] tensor (pos_weight)
-                - narrowing: [1] tensor (pos_weight)
+            Dictionary with class weights for each target label.
         """
         n_samples = len(self.records)
-
-        # Count multiclass labels
-        pfirrmann_counts = Counter(r["pfirrmann"] - 1 for r in self.records)  # 0-4
-        modic_counts = Counter(r["modic"] for r in self.records)  # 0-3
-
-        # Count binary labels
-        herniation_pos = sum(r["herniation"] for r in self.records)
-        bulging_pos = sum(r["bulging"] for r in self.records)
-        upper_endplate_pos = sum(r["upper_endplate"] for r in self.records)
-        lower_endplate_pos = sum(r["lower_endplate"] for r in self.records)
-        spondy_pos = sum(r["spondylolisthesis"] for r in self.records)
-        narrowing_pos = sum(r["narrowing"] for r in self.records)
-
-        # Compute multiclass weights: n_samples / (n_classes * count)
-        pfirrmann_weights = torch.zeros(5)
-        for i in range(5):
-            count = pfirrmann_counts.get(i, 1)  # Avoid division by zero
-            pfirrmann_weights[i] = n_samples / (5 * count)
-
-        modic_weights = torch.zeros(4)
-        for i in range(4):
-            count = modic_counts.get(i, 1)
-            modic_weights[i] = n_samples / (4 * count)
+        weights: dict[str, torch.Tensor] = {}
 
         # Compute binary pos_weight: n_negative / n_positive
         def pos_weight(n_pos: int) -> float:
             n_neg = n_samples - n_pos
             return n_neg / max(n_pos, 1)  # Avoid division by zero
 
-        herniation_weights = torch.tensor([pos_weight(herniation_pos)])
-        bulging_weights = torch.tensor([pos_weight(bulging_pos)])
-        upper_endplate_weights = torch.tensor([pos_weight(upper_endplate_pos)])
-        lower_endplate_weights = torch.tensor([pos_weight(lower_endplate_pos)])
-        spondy_weights = torch.tensor([pos_weight(spondy_pos)])
-        narrowing_weights = torch.tensor([pos_weight(narrowing_pos)])
+        # Multiclass labels
+        if "pfirrmann" in self.target_labels:
+            pfirrmann_counts = Counter(r["pfirrmann"] - 1 for r in self.records)
+            pfirrmann_weights = torch.zeros(5)
+            for i in range(5):
+                count = pfirrmann_counts.get(i, 1)
+                pfirrmann_weights[i] = n_samples / (5 * count)
+            weights["pfirrmann"] = pfirrmann_weights
 
-        return {
-            "pfirrmann": pfirrmann_weights,
-            "modic": modic_weights,
-            "herniation": herniation_weights,
-            "bulging": bulging_weights,
-            "upper_endplate": upper_endplate_weights,
-            "lower_endplate": lower_endplate_weights,
-            "spondy": spondy_weights,
-            "narrowing": narrowing_weights,
+        if "modic" in self.target_labels:
+            modic_counts = Counter(r["modic"] for r in self.records)
+            modic_weights = torch.zeros(4)
+            for i in range(4):
+                count = modic_counts.get(i, 1)
+                modic_weights[i] = n_samples / (4 * count)
+            weights["modic"] = modic_weights
+
+        # Binary labels
+        binary_labels = {
+            "herniation": "herniation",
+            "bulging": "bulging",
+            "upper_endplate": "upper_endplate",
+            "lower_endplate": "lower_endplate",
+            "spondy": "spondylolisthesis",
+            "narrowing": "narrowing",
         }
+
+        for label_name, record_key in binary_labels.items():
+            if label_name in self.target_labels:
+                n_pos = sum(r[record_key] for r in self.records)
+                weights[label_name] = torch.tensor([pos_weight(n_pos)])
+
+        return weights
+
+
+class DynamicTargets:
+    """Container for dynamic multi-task targets.
+
+    Unlike MTLTargets which has fixed fields, this class works with any subset
+    of labels. Provides the same interface (to(), to_dict()) for compatibility.
+
+    Example:
+        targets = DynamicTargets({"pfirrmann": tensor1, "modic": tensor2})
+        targets = targets.to("cuda:0")
+        targets_dict = targets.to_dict()
+    """
+
+    def __init__(self, data: dict[str, torch.Tensor]) -> None:
+        """Initialize with target tensors.
+
+        Args:
+            data: Dictionary mapping label names to tensors.
+        """
+        self._data = data
+
+    def to(self, device: torch.device | str) -> "DynamicTargets":
+        """Move all tensors to the specified device."""
+        return DynamicTargets({k: v.to(device) for k, v in self._data.items()})
+
+    def to_dict(self) -> dict[str, torch.Tensor]:
+        """Convert to dictionary format."""
+        return self._data
+
+    def __getattr__(self, name: str) -> torch.Tensor:
+        """Allow attribute-style access to targets."""
+        if name.startswith("_"):
+            return object.__getattribute__(self, name)
+        if name in self._data:
+            return self._data[name]
+        raise AttributeError(f"No target named '{name}'")
+
+    def __contains__(self, name: str) -> bool:
+        """Check if a target exists."""
+        return name in self._data
+
+    @property
+    def labels(self) -> list[str]:
+        """Get list of label names."""
+        return list(self._data.keys())
 
 
 class ClassificationCollator:
     """Custom collator for classification dataset.
 
-    Batches samples and creates MTLTargets.
+    Batches samples and creates DynamicTargets with only the labels present
+    in the samples. Works with any subset of labels.
     """
 
     def __call__(self, samples: list[dict[str, Any]]) -> dict[str, Any]:
         """Collate samples into batch."""
         images = torch.stack([s["image"] for s in samples])
 
-        # Stack targets into tensors
-        pfirrmann = torch.tensor(
-            [s["targets"]["pfirrmann"] for s in samples],
-            dtype=torch.long,
-        )
-        modic = torch.tensor(
-            [s["targets"]["modic"] for s in samples],
-            dtype=torch.long,
-        )
-        herniation = torch.tensor(
-            [s["targets"]["herniation"] for s in samples],
-            dtype=torch.float32,
-        )
-        bulging = torch.tensor(
-            [s["targets"]["bulging"] for s in samples],
-            dtype=torch.float32,
-        )
-        upper_endplate = torch.tensor(
-            [s["targets"]["upper_endplate"] for s in samples],
-            dtype=torch.float32,
-        )
-        lower_endplate = torch.tensor(
-            [s["targets"]["lower_endplate"] for s in samples],
-            dtype=torch.float32,
-        )
-        spondy = torch.tensor(
-            [s["targets"]["spondy"] for s in samples],
-            dtype=torch.float32,
-        )
-        narrowing = torch.tensor(
-            [s["targets"]["narrowing"] for s in samples],
-            dtype=torch.float32,
-        )
+        # Get which labels are present in samples
+        target_labels = list(samples[0]["targets"].keys())
 
-        targets = MTLTargets(
-            pfirrmann=pfirrmann,
-            modic=modic,
-            herniation=herniation,
-            bulging=bulging,
-            upper_endplate=upper_endplate,
-            lower_endplate=lower_endplate,
-            spondy=spondy,
-            narrowing=narrowing,
-        )
+        # Stack targets into tensors (only for present labels)
+        targets_dict: dict[str, torch.Tensor] = {}
+
+        for label in target_labels:
+            label_info = LABEL_INFO[label]
+            if label_info["type"] == "multiclass":
+                dtype = torch.long
+            else:
+                dtype = torch.float32
+
+            targets_dict[label] = torch.tensor(
+                [s["targets"][label] for s in samples],
+                dtype=dtype,
+            )
+
+        targets = DynamicTargets(targets_dict)
 
         level_idx = torch.tensor(
             [s["level_idx"] for s in samples],

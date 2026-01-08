@@ -314,198 +314,152 @@ class ClassificationMetrics(BaseMetrics):
 class MTLClassificationMetrics:
     """Metrics calculator for multi-task classification.
 
-    Computes metrics for each task head:
-    - Pfirrmann: 5-class accuracy
-    - Modic: 4-class accuracy
-    - Binary heads: AUC, F1, Precision, Recall
+    Computes metrics for each task head. Supports dynamic label selection.
+
+    - Multiclass labels (pfirrmann, modic): accuracy, balanced accuracy
+    - Binary labels: accuracy, precision, recall, F1
+
+    Args:
+        target_labels: List of label names to compute metrics for.
+            If None, computes metrics for all 8 labels.
     """
 
-    def __init__(self) -> None:
-        """Initialize metrics for all heads."""
-        self.pfirrmann_metrics = ClassificationMetrics(
-            num_classes=5,
-            class_names=[f"Grade_{i+1}" for i in range(5)],
-        )
-        self.modic_metrics = ClassificationMetrics(
-            num_classes=4,
-            class_names=[f"Type_{i}" for i in range(4)],
-        )
+    # All available labels with their types
+    _MULTICLASS_LABELS = {"pfirrmann": 5, "modic": 4}
+    _BINARY_LABELS = {
+        "herniation", "bulging", "upper_endplate",
+        "lower_endplate", "spondy", "narrowing"
+    }
 
-        # Accumulators for binary heads
-        self._herniation_preds: list[np.ndarray] = []
-        self._herniation_targets: list[np.ndarray] = []
-        self._bulging_preds: list[np.ndarray] = []
-        self._bulging_targets: list[np.ndarray] = []
-        self._upper_endplate_preds: list[np.ndarray] = []
-        self._upper_endplate_targets: list[np.ndarray] = []
-        self._lower_endplate_preds: list[np.ndarray] = []
-        self._lower_endplate_targets: list[np.ndarray] = []
-        self._spondy_preds: list[np.ndarray] = []
-        self._spondy_targets: list[np.ndarray] = []
-        self._narrowing_preds: list[np.ndarray] = []
-        self._narrowing_targets: list[np.ndarray] = []
+    def __init__(self, target_labels: list[str] | None = None) -> None:
+        """Initialize metrics for specified labels.
+
+        Args:
+            target_labels: Labels to compute metrics for. If None, uses all labels.
+        """
+        if target_labels is None:
+            target_labels = list(self._MULTICLASS_LABELS.keys()) + list(self._BINARY_LABELS)
+        self._target_labels = set(target_labels)
+
+        # Initialize multiclass metrics only for target labels
+        self._multiclass_metrics: dict[str, ClassificationMetrics] = {}
+        if "pfirrmann" in self._target_labels:
+            self._multiclass_metrics["pfirrmann"] = ClassificationMetrics(
+                num_classes=5,
+                class_names=[f"Grade_{i+1}" for i in range(5)],
+            )
+        if "modic" in self._target_labels:
+            self._multiclass_metrics["modic"] = ClassificationMetrics(
+                num_classes=4,
+                class_names=[f"Type_{i}" for i in range(4)],
+            )
+
+        # Initialize binary accumulators only for target labels
+        self._binary_preds: dict[str, list[np.ndarray]] = {}
+        self._binary_targets: dict[str, list[np.ndarray]] = {}
+        for label in self._BINARY_LABELS:
+            if label in self._target_labels:
+                self._binary_preds[label] = []
+                self._binary_targets[label] = []
 
     def reset(self) -> None:
         """Reset all accumulators."""
-        self.pfirrmann_metrics.reset()
-        self.modic_metrics.reset()
-        self._herniation_preds = []
-        self._herniation_targets = []
-        self._bulging_preds = []
-        self._bulging_targets = []
-        self._upper_endplate_preds = []
-        self._upper_endplate_targets = []
-        self._lower_endplate_preds = []
-        self._lower_endplate_targets = []
-        self._spondy_preds = []
-        self._spondy_targets = []
-        self._narrowing_preds = []
-        self._narrowing_targets = []
+        for metrics in self._multiclass_metrics.values():
+            metrics.reset()
+        for label in self._binary_preds:
+            self._binary_preds[label] = []
+            self._binary_targets[label] = []
 
     def update(
         self,
-        predictions: Any,  # MTLPredictions or dict[str, Tensor]
-        targets: Any,  # MTLTargets or dict[str, Tensor]
+        predictions: Any,  # dict[str, Tensor] or DynamicTargets
+        targets: Any,  # dict[str, Tensor] or DynamicTargets
     ) -> None:
         """Accumulate predictions from a batch.
 
         Args:
-            predictions: MTLPredictions dataclass or dict with task tensors.
-            targets: MTLTargets dataclass or dict with task tensors.
+            predictions: Dict with task tensors or object with attribute access.
+            targets: Dict with task tensors or object with attribute access.
         """
-        # Support both dict and dataclass access
-        def get_pred(key: str) -> torch.Tensor:
+        # Support both dict and object access
+        def get_pred(key: str) -> torch.Tensor | None:
             if isinstance(predictions, dict):
-                return predictions[key]
-            return getattr(predictions, key)
+                return predictions.get(key)
+            return getattr(predictions, key, None)
 
-        def get_target(key: str) -> torch.Tensor:
+        def get_target(key: str) -> torch.Tensor | None:
             if isinstance(targets, dict):
-                return targets[key]
-            return getattr(targets, key)
+                return targets.get(key)
+            return getattr(targets, key, None)
 
         # Multiclass heads
-        pfirrmann_pred = get_pred("pfirrmann").argmax(dim=1).cpu().numpy()
-        modic_pred = get_pred("modic").argmax(dim=1).cpu().numpy()
+        for label, metrics in self._multiclass_metrics.items():
+            pred = get_pred(label)
+            target = get_target(label)
+            if pred is not None and target is not None:
+                pred_classes = pred.argmax(dim=1).cpu().numpy()
+                metrics.update(pred_classes, target.cpu().numpy())
 
-        self.pfirrmann_metrics.update(
-            pfirrmann_pred,
-            get_target("pfirrmann").cpu().numpy(),
-        )
-        self.modic_metrics.update(
-            modic_pred,
-            get_target("modic").cpu().numpy(),
-        )
-
-        # Binary heads (sigmoid probabilities)
-        self._herniation_preds.append(
-            torch.sigmoid(get_pred("herniation")).cpu().numpy()
-        )
-        self._herniation_targets.append(get_target("herniation").cpu().numpy())
-
-        self._bulging_preds.append(
-            torch.sigmoid(get_pred("bulging")).cpu().numpy()
-        )
-        self._bulging_targets.append(get_target("bulging").cpu().numpy())
-
-        self._upper_endplate_preds.append(
-            torch.sigmoid(get_pred("upper_endplate")).cpu().numpy()
-        )
-        self._upper_endplate_targets.append(get_target("upper_endplate").cpu().numpy())
-
-        self._lower_endplate_preds.append(
-            torch.sigmoid(get_pred("lower_endplate")).cpu().numpy()
-        )
-        self._lower_endplate_targets.append(get_target("lower_endplate").cpu().numpy())
-
-        self._spondy_preds.append(
-            torch.sigmoid(get_pred("spondy")).cpu().numpy()
-        )
-        self._spondy_targets.append(get_target("spondy").cpu().numpy())
-
-        self._narrowing_preds.append(
-            torch.sigmoid(get_pred("narrowing")).cpu().numpy()
-        )
-        self._narrowing_targets.append(get_target("narrowing").cpu().numpy())
+        # Binary heads
+        for label in self._binary_preds:
+            pred = get_pred(label)
+            target = get_target(label)
+            if pred is not None and target is not None:
+                self._binary_preds[label].append(
+                    torch.sigmoid(pred).cpu().numpy()
+                )
+                self._binary_targets[label].append(target.cpu().numpy())
 
     def compute(self) -> dict[str, float]:
         """Compute all metrics."""
         metrics: dict[str, float] = {}
 
         # Multiclass metrics
-        pfirrmann = self.pfirrmann_metrics.compute()
-        modic = self.modic_metrics.compute()
-
-        metrics["pfirrmann_accuracy"] = pfirrmann.get("accuracy", 0.0)
-        metrics["pfirrmann_balanced_acc"] = pfirrmann.get("balanced_accuracy", 0.0)
-        metrics["modic_accuracy"] = modic.get("accuracy", 0.0)
-        metrics["modic_balanced_acc"] = modic.get("balanced_accuracy", 0.0)
+        for label, label_metrics in self._multiclass_metrics.items():
+            computed = label_metrics.compute()
+            if computed:
+                metrics[f"{label}_accuracy"] = computed.get("accuracy", 0.0)
+                metrics[f"{label}_balanced_acc"] = computed.get("balanced_accuracy", 0.0)
 
         # Binary metrics
-        binary_heads = [
-            ("herniation", self._herniation_preds, self._herniation_targets, 1),
-            ("bulging", self._bulging_preds, self._bulging_targets, 1),
-            ("upper_endplate", self._upper_endplate_preds, self._upper_endplate_targets, 1),
-            ("lower_endplate", self._lower_endplate_preds, self._lower_endplate_targets, 1),
-            ("spondy", self._spondy_preds, self._spondy_targets, 1),
-            ("narrowing", self._narrowing_preds, self._narrowing_targets, 1),
-        ]
-
-        for name, preds_list, targets_list, n_outputs in binary_heads:
+        for label, preds_list in self._binary_preds.items():
             if not preds_list:
                 continue
 
-            preds = np.concatenate(preds_list, axis=0)
-            targets = np.concatenate(targets_list, axis=0)
+            preds = np.concatenate(preds_list, axis=0).flatten()
+            targets = np.concatenate(self._binary_targets[label], axis=0).flatten()
 
-            # Compute per-output metrics
-            for i in range(n_outputs):
-                if n_outputs == 1:
-                    p = preds.flatten()
-                    t = targets.flatten()
-                    suffix = ""
-                else:
-                    p = preds[:, i]
-                    t = targets[:, i]
-                    suffix = f"_{i}"
+            # Binary predictions
+            pred_binary = (preds > 0.5).astype(int)
+            t_binary = targets.astype(int)
 
-                # Binary predictions
-                pred_binary = (p > 0.5).astype(int)
-                t_binary = t.astype(int)
+            # Accuracy
+            acc = np.mean(pred_binary == t_binary) * 100
+            metrics[f"{label}_accuracy"] = float(acc)
 
-                # Accuracy
-                acc = np.mean(pred_binary == t_binary) * 100
-                metrics[f"{name}{suffix}_accuracy"] = float(acc)
+            # Precision, Recall, F1
+            tp = np.sum((pred_binary == 1) & (t_binary == 1))
+            fp = np.sum((pred_binary == 1) & (t_binary == 0))
+            fn = np.sum((pred_binary == 0) & (t_binary == 1))
 
-                # Precision, Recall, F1
-                tp = np.sum((pred_binary == 1) & (t_binary == 1))
-                fp = np.sum((pred_binary == 1) & (t_binary == 0))
-                fn = np.sum((pred_binary == 0) & (t_binary == 1))
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1 = (
+                2 * precision * recall / (precision + recall)
+                if (precision + recall) > 0
+                else 0.0
+            )
 
-                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-                f1 = (
-                    2 * precision * recall / (precision + recall)
-                    if (precision + recall) > 0
-                    else 0.0
-                )
+            metrics[f"{label}_precision"] = float(precision)
+            metrics[f"{label}_recall"] = float(recall)
+            metrics[f"{label}_f1"] = float(f1)
 
-                metrics[f"{name}{suffix}_precision"] = float(precision)
-                metrics[f"{name}{suffix}_recall"] = float(recall)
-                metrics[f"{name}{suffix}_f1"] = float(f1)
-
-        # Overall average accuracy
-        accs = [
-            metrics.get("pfirrmann_accuracy", 0),
-            metrics.get("modic_accuracy", 0),
-            metrics.get("herniation_accuracy", 0),
-            metrics.get("bulging_accuracy", 0),
-            metrics.get("upper_endplate_accuracy", 0),
-            metrics.get("lower_endplate_accuracy", 0),
-            metrics.get("spondy_accuracy", 0),
-            metrics.get("narrowing_accuracy", 0),
-        ]
-        metrics["overall_accuracy"] = float(np.mean(accs))
+        # Overall average accuracy (only for present labels)
+        accs = [v for k, v in metrics.items() if k.endswith("_accuracy")]
+        if accs:
+            metrics["overall_accuracy"] = float(np.mean(accs))
+        else:
+            metrics["overall_accuracy"] = 0.0
 
         return metrics
 

@@ -250,6 +250,11 @@ config = ClassificationDatasetConfig(
     base_path=Path("data"),
     localization_model_path=Path("weights/localization/model.pt"),
     crop_size=(64, 64),
+    # Option 1: Crop delta in pixels (default)
+    crop_delta=(96, 32, 64, 64),  # left, right, top, bottom in pixels
+    # Option 2: Crop delta in mm (takes precedence if set)
+    crop_delta_mm=(50.0, 20.0, 30.0, 30.0),  # left, right, top, bottom in mm
+    append_to_existing=True,  # Append to existing dataset if output exists
 )
 classification_main(config)
 
@@ -354,6 +359,20 @@ config = ClassificationConfig(
 trainer = ClassificationTrainer(config)
 result = trainer.train()
 
+# Train on specific labels only (single-label or subset)
+# Useful for independent model training per label
+config = ClassificationConfig(
+    data_path=Path("data/processed/classification"),
+    target_labels=["pfirrmann"],  # Train only Pfirrmann grade
+    # target_labels=["pfirrmann", "modic"],  # Train multiple specific labels
+    output_size=(224, 224),
+    batch_size=32,
+    num_epochs=100,
+    use_wandb=True,
+)
+trainer = ClassificationTrainer(config)
+result = trainer.train()
+
 # Create custom localization dataset
 dataset = IVDCoordsDataset(
     data_path=Path("data/processed/ivd_coords"),
@@ -415,6 +434,38 @@ visualizer = TrainingVisualizer(
 )
 visualizer.plot_training_curves(history)
 visualizer.plot_error_distribution(predictions, targets, levels)
+
+# Classification-specific visualization
+# Plot test samples with predicted vs ground truth labels overlaid
+visualizer.plot_test_samples_with_labels(
+    images=images_np,           # List of [H, W, C] numpy arrays
+    predictions=pred_dict,      # Dict[label_name, np.ndarray]
+    targets=target_dict,        # Dict[label_name, np.ndarray]
+    metadata=metadata_list,     # Optional list of dicts with level, patient_id
+    num_samples=16,
+    filename="test_samples",
+)
+
+# Plot classification predictions with colored borders (green=correct, red=incorrect)
+visualizer.plot_classification_predictions(
+    images=images_np,
+    predictions=pred_dict,
+    targets=target_dict,
+    metadata=metadata_list,
+    filename="classification_predictions",
+)
+
+# Plot per-label metrics bar chart
+visualizer.plot_classification_metrics(
+    metrics={"pfirrmann_accuracy": 0.85, "modic_f1": 0.72, ...},
+    target_labels=["pfirrmann", "modic"],
+    filename="classification_metrics",
+)
+
+# Evaluate with visualization (generates test samples and metrics plots)
+trainer = ClassificationTrainer(config)
+trainer.train()
+metrics = trainer.evaluate(visualize=True, num_visualization_samples=32)
 ```
 
 ## CLI Options
@@ -464,9 +515,11 @@ Supports two report formats automatically:
 | `--model-variant` | ConvNext variant for localization | `base` |
 | `--crop-size` | Output size of cropped IVD regions in pixels (H W) | `128 128` |
 | `--crop-delta` | Crop region deltas (left right top bottom) in pixels | `96 32 64 64` |
+| `--crop-delta-mm` | Crop region deltas (left right top bottom) in mm. Takes precedence over `--crop-delta` | None |
 | `--image-size` | Input image size for localization model (H W) | `224 224` |
 | `--include-phenikaa` | Include Phenikaa dataset | `True` |
 | `--include-spider` | Include SPIDER dataset | `True` |
+| `--append-to-existing` | If output exists, append new data to existing annotations | `True` |
 | `--device` | Device for model inference | `cuda:0` |
 | `-v, --verbose` | Debug logging | `False` |
 
@@ -537,6 +590,7 @@ Supports two report formats automatically:
 | `--output-path` | Training output directory | `weights/classification/<run_id>` |
 | `--output-size` | Final input size to model (H W) | `224 224` |
 | `--levels` | Filter IVD levels (e.g., `L4/L5 L5/S1`) | None |
+| `--target-labels` | Filter to specific labels (e.g., `pfirrmann modic`) | None (all labels) |
 | `--pretrained` | Use ImageNet pretrained weights | `True` |
 | `--dropout` | Dropout rate | `0.3` |
 | `--freeze-backbone-epochs` | Epochs to freeze backbone | `0` |
@@ -551,6 +605,36 @@ Supports two report formats automatically:
 | `--visualize-predictions` | Generate prediction visualizations | `True` |
 | `--use-wandb` | Enable wandb logging | `False` |
 | `--wandb-project` | Wandb project name | `spine-vision` |
+| `-v, --verbose` | Debug logging | `False` |
+
+Available target labels for `--target-labels`:
+- `pfirrmann`: 5-class Pfirrmann grade (1-5)
+- `modic`: 4-class Modic type (0-3)
+- `herniation`: Binary disc herniation
+- `bulging`: Binary disc bulging
+- `upper_endplate`: Binary upper endplate defect
+- `lower_endplate`: Binary lower endplate defect
+- `spondy`: Binary spondylolisthesis
+- `narrowing`: Binary disc narrowing
+
+### spine-vision evaluate
+Evaluates a trained classification model on the test set with visualization and wandb logging.
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--model-path` | Path to trained model checkpoint (.pt file) | Required |
+| `--data-path` | Classification dataset path | `data/processed/classification` |
+| `--backbone` | Backbone architecture | `resnet50` |
+| `--output-size` | Input size to model (H W) | `128 128` |
+| `--levels` | Filter IVD levels (e.g., `L4/L5 L5/S1`) | None |
+| `--target-labels` | Filter to specific labels | None (all labels) |
+| `--visualize` | Generate test sample visualizations | `True` |
+| `--num-visualization-samples` | Number of samples to visualize | `32` |
+| `--output-path` | Output directory for visualizations | Model directory |
+| `--use-wandb` | Log to wandb | `False` |
+| `--wandb-project` | Wandb project name | `spine-vision` |
+| `--wandb-run-name` | Wandb run name | `eval-<model_name>` |
+| `--device` | Inference device | `cuda:0` |
+| `--batch-size` | Batch size for evaluation | `32` |
 | `-v, --verbose` | Debug logging | `False` |
 
 ## Adding New Components

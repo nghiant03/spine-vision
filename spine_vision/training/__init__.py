@@ -76,7 +76,13 @@ from spine_vision.training.trainers import (
     LocalizationConfig,
     LocalizationTrainer,
 )
-from spine_vision.training.visualization import TrainingVisualizer
+from spine_vision.training.visualization import (
+    LABEL_COLORS,
+    LABEL_DISPLAY_NAMES,
+    TrainingVisualizer,
+    load_classification_original_images,
+    load_original_images,
+)
 
 __all__ = [
     # Base classes
@@ -124,4 +130,8 @@ __all__ = [
     "MTLClassificationMetrics",
     # Visualization
     "TrainingVisualizer",
+    "LABEL_DISPLAY_NAMES",
+    "LABEL_COLORS",
+    "load_original_images",
+    "load_classification_original_images",
 ]
