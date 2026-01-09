@@ -1,20 +1,148 @@
-"""Document field extraction combining detection and recognition."""
+"""OCR module for medical document text extraction.
+
+Combines PaddleOCR detection with VietOCR recognition for Vietnamese text.
+"""
 
 from pathlib import Path
 
 import cv2
 import numpy as np
 from loguru import logger
+from paddleocr import TextDetection
 from PIL import Image
+from vietocr.tool.config import Cfg
+from vietocr.tool.predictor import Predictor
 
-from spine_vision.io.pdf import pdf_first_page_to_array
-from spine_vision.ocr.detection import TextDetector
-from spine_vision.ocr.recognition import TextRecognizer
+from spine_vision.io import pdf_first_page_to_array
 
 # Supported file extensions
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif"}
 PDF_EXTENSIONS = {".pdf"}
 SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | PDF_EXTENSIONS
+
+
+class TextDetector:
+    """Wrapper for PaddleOCR text detection.
+
+    Detects text regions in images and returns bounding polygons.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "PP-OCRv5_server_det",
+        use_gpu: bool = True,
+    ) -> None:
+        """Initialize text detector.
+
+        Args:
+            model_name: PaddleOCR detection model name.
+            use_gpu: Whether to use GPU acceleration.
+        """
+        logger.info(f"Loading detection model: {model_name}")
+        self.model = TextDetection(model_name=model_name)
+        self.use_gpu = use_gpu
+
+    def detect(self, image_path: Path | str) -> list[np.ndarray]:
+        """Detect text regions in an image.
+
+        Args:
+            image_path: Path to image file.
+
+        Returns:
+            List of polygon arrays, each with shape (4, 2) representing
+            the four corners of a text region.
+        """
+        path_str = str(image_path) if isinstance(image_path, Path) else image_path
+        result = self.model.predict(path_str)
+
+        if not result:
+            logger.debug(f"No text detected in {image_path}")
+            return []
+
+        boxes = result[0].get("dt_polys", [])
+        return [np.array(box).astype(np.int32) for box in boxes]
+
+    def detect_from_array(self, image: np.ndarray) -> list[np.ndarray]:
+        """Detect text regions from a numpy array.
+
+        Args:
+            image: Image as numpy array (RGB).
+
+        Returns:
+            List of polygon arrays.
+        """
+        result = self.model.predict(image)
+
+        if not result:
+            return []
+
+        boxes = result[0].get("dt_polys", [])
+        return [np.array(box).astype(np.int32) for box in boxes]
+
+
+class TextRecognizer:
+    """Wrapper for VietOCR text recognition.
+
+    Recognizes Vietnamese text from cropped text region images.
+    """
+
+    def __init__(
+        self,
+        model_name: str = "vgg_transformer",
+        device: str = "cuda:0",
+        use_beamsearch: bool = False,
+    ) -> None:
+        """Initialize text recognizer.
+
+        Args:
+            model_name: VietOCR model configuration name.
+            device: Device to run inference on ('cuda:0' or 'cpu').
+            use_beamsearch: Whether to use beam search decoding.
+        """
+        logger.info(f"Loading recognition model: {model_name}")
+
+        config = Cfg.load_config_from_name(model_name)
+        config["device"] = device
+        config["cnn"]["pretrained"] = False
+        config["predictor"]["beamsearch"] = use_beamsearch
+
+        self.model = Predictor(config)
+        self.device = device
+
+    def recognize(self, image: Image.Image) -> str:
+        """Recognize text from a cropped image.
+
+        Args:
+            image: PIL Image of cropped text region.
+
+        Returns:
+            Recognized text string.
+        """
+        result = self.model.predict(image)
+        return result if isinstance(result, str) else result[0]
+
+    def recognize_from_array(self, image: np.ndarray) -> str:
+        """Recognize text from a numpy array.
+
+        Args:
+            image: Image as numpy array (RGB).
+
+        Returns:
+            Recognized text string.
+        """
+        pil_image = Image.fromarray(image)
+        return self.recognize(pil_image)
+
+    def recognize_batch(self, images: list[Image.Image]) -> list[str]:
+        """Recognize text from multiple images.
+
+        Args:
+            images: List of PIL Images.
+
+        Returns:
+            List of recognized text strings.
+        """
+        return [self.recognize(img) for img in images]
 
 
 def crop_polygon(image_np: np.ndarray, points: np.ndarray) -> Image.Image:

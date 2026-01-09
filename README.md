@@ -50,7 +50,7 @@ spine-vision visualize --input-path data/images --output-mode html
 ```python
 from pathlib import Path
 from spine_vision.io import read_medical_image, write_medical_image
-from spine_vision.inference import NNUNetSegmentation
+from spine_vision.processor import NNUNetSegmentation
 from spine_vision.visualization import PlotlyViewer
 
 # Load and process medical image

@@ -29,8 +29,6 @@ from spine_vision.datasets.classification import ClassificationDatasetConfig
 from spine_vision.datasets.classification import main as classification_main
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig
 from spine_vision.datasets.ivd_coords import main as ivd_coords_main
-from spine_vision.datasets.nnunet import ConvertConfig
-from spine_vision.datasets.nnunet import main as nnunet_main
 from spine_vision.datasets.phenikaa import PreprocessConfig
 from spine_vision.datasets.phenikaa import main as phenikaa_main
 from spine_vision.training.trainers.classification import ClassificationConfig
@@ -38,14 +36,6 @@ from spine_vision.training.trainers.localization import LocalizationConfig
 
 DatasetSubcommand = Annotated[
     Union[
-        Annotated[
-            ConvertConfig,
-            tyro.conf.subcommand(
-                "nnunet",
-                prefix_name=False,
-                description="Convert datasets to nnU-Net format",
-            ),
-        ],
         Annotated[
             IVDDatasetConfig,
             tyro.conf.subcommand(
@@ -143,8 +133,6 @@ def cli() -> None:
     match config:
         case DatasetCommand(cmd=cmd):
             match cmd:
-                case ConvertConfig():
-                    nnunet_main(cmd)
                 case IVDDatasetConfig():
                     ivd_coords_main(cmd)
                 case PreprocessConfig():

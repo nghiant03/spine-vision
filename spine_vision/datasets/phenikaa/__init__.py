@@ -1,4 +1,4 @@
-"""Preprocess Phenikaa medical data: OCR extraction and patient matching.
+"""Phenikaa dataset creation: OCR extraction and patient matching.
 
 Supports two report formats:
 1. ID-named reports (e.g., 250010139.png): Extract patient name/birthday via OCR,
@@ -21,11 +21,13 @@ from pydantic import BaseModel, computed_field
 from tqdm.rich import tqdm
 from tqdm.std import TqdmExperimentalWarning
 
-from spine_vision.core.logging import add_file_log, setup_logger
-from spine_vision.io.tabular import load_tabular_data
-from spine_vision.matching.fuzzy import fuzzy_value_extract
-from spine_vision.matching.patient import PatientMatcher
-from spine_vision.ocr.extraction import SUPPORTED_EXTENSIONS, DocumentExtractor
+from spine_vision.core import add_file_log, setup_logger
+from spine_vision.datasets.phenikaa.matching import PatientMatcher, fuzzy_value_extract
+from spine_vision.datasets.phenikaa.ocr import (
+    SUPPORTED_EXTENSIONS,
+    DocumentExtractor,
+)
+from spine_vision.io import load_tabular_data
 
 # OCR field patterns
 NAME_FIELD_PATTERN = "Ho ten nguoi benh"
@@ -36,7 +38,9 @@ ONE_HOT_COL = "Modic"
 # Regex for patient-named report files (e.g., "Bùi Thị Dung.pdf" or "NGUYEN_VAN_SON_20250718.pdf")
 # Matches Vietnamese names with spaces/underscores, optional date suffix
 # Unicode range À-ỹ covers Vietnamese diacritics
-PATIENT_NAMED_REPORT_REGEX = re.compile(r"^[a-zA-ZÀ-ỹ]+(?:[\s_][a-zA-ZÀ-ỹ]+)*(?:[\s_]\d{8})?$")
+PATIENT_NAMED_REPORT_REGEX = re.compile(
+    r"^[a-zA-ZÀ-ỹ]+(?:[\s_][a-zA-ZÀ-ỹ]+)*(?:[\s_]\d{8})?$"
+)
 
 # Regex for ID-only report files (e.g., 250010139.png)
 ID_NAMED_REPORT_REGEX = re.compile(r"^\d+$")
@@ -139,7 +143,8 @@ class PatientNamedReportProcessor(ReportProcessor):
     """
 
     def __init__(
-        self, pdf_id_crop_region: tuple[int, int, int, int] = DEFAULT_PDF_ID_CROP_REGION
+        self,
+        pdf_id_crop_region: tuple[int, int, int, int] = DEFAULT_PDF_ID_CROP_REGION,
     ) -> None:
         """Initialize processor with optional custom crop region.
 

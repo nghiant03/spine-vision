@@ -12,16 +12,11 @@ from spine_vision.datasets.classification import ClassificationDatasetConfig
 from spine_vision.datasets.classification import main as create_classification_dataset
 from spine_vision.datasets.ivd_coords import IVDDatasetConfig
 from spine_vision.datasets.ivd_coords import main as create_ivd_dataset
-from spine_vision.datasets.nnunet import ConvertConfig
-from spine_vision.datasets.nnunet import main as convert_to_nnunet
 from spine_vision.datasets.phenikaa import PreprocessConfig
 from spine_vision.datasets.phenikaa import main as preprocess_phenikaa
 from spine_vision.datasets.rsna import get_series_type, load_series_mapping
 
 __all__ = [
-    "ConvertConfig",
-    "convert_to_nnunet",
-    "IVDDatasetConfig",
     "create_ivd_dataset",
     "PreprocessConfig",
     "preprocess_phenikaa",

@@ -27,7 +27,7 @@ from tqdm.rich import tqdm
 from tqdm.std import TqdmExperimentalWarning
 
 from spine_vision.core.logging import setup_logger
-from spine_vision.io import normalize_to_uint8, read_dicom_series, read_medical_image
+from spine_vision.io import normalize_to_uint8,  read_medical_image
 
 
 class ClassificationDatasetConfig(BaseModel):
@@ -115,8 +115,31 @@ class ClassificationRecord(BaseModel):
 # IVD level mapping (index 0-4 corresponds to L1/L2 to L5/S1)
 IVD_LEVEL_NAMES = ["L1/L2", "L2/L3", "L3/L4", "L4/L5", "L5/S1"]
 
+def resample_to_isotropic(image: sitk.Image, new_spacing: tuple[float, float, float]=(1.0, 1.0, 1.0)) -> sitk.Image:
+    """
+    Resamples a SimpleITK image to a uniform spacing (square pixels).
+    """
+    original_spacing = image.GetSpacing()
+    original_size = image.GetSize()
+    
+    new_size = [
+        int(round(osz * osp / nsp))
+        for osz, osp, nsp in zip(original_size, original_spacing, new_spacing)
+    ]
+    
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetOutputSpacing(new_spacing)
+    resampler.SetSize(new_size)
+    
+    resampler.SetOutputDirection(image.GetDirection())
+    resampler.SetOutputOrigin(image.GetOrigin())
+    resampler.SetTransform(sitk.Transform())
+    
+    resampler.SetInterpolator(sitk.sitkBSpline)
+    
+    return resampler.Execute(image)
 
-def extract_middle_slice(image: sitk.Image) -> tuple[np.ndarray, tuple[float, float]]:
+def extract_middle_slice(image: sitk.Image) -> np.ndarray:
     """Extract middle sagittal slice from 3D image.
 
     Args:
@@ -125,20 +148,15 @@ def extract_middle_slice(image: sitk.Image) -> tuple[np.ndarray, tuple[float, fl
     Returns:
         Tuple of (2D numpy array of the middle slice, (row_spacing, col_spacing) in mm).
     """
-    spacing = image.GetSpacing()
     image = sitk.DICOMOrient(image, 'LPI')
     arr = sitk.GetArrayFromImage(image)
 
     if arr.ndim == 2:
         # 2D image: spacing is (x, y)
-        return arr, (spacing[1], spacing[0])
+        return arr
 
-    # 3D image: spacing is (x, y, z), array is (z, y, x)
-    # For sagittal slice (x fixed), we get (z, y) array with (z_spacing, y_spacing)
     mid_idx = arr.shape[2] // 2
-    row_spacing = spacing[2]  # z spacing -> row
-    col_spacing = spacing[1]  # y spacing -> col
-    return arr[:, :, mid_idx], (row_spacing, col_spacing)
+    return arr[:, :, mid_idx]
 
 
 def mm_to_pixels(
@@ -164,7 +182,7 @@ def mm_to_pixels(
     )
 
 
-def crop_ivd_region(
+def crop_region(
     image: np.ndarray,
     center_x: float,
     center_y: float,
@@ -355,8 +373,9 @@ def process_phenikaa(
                     continue
 
                 try:
-                    image = read_dicom_series(series_dir)
-                    middle_slice, spacing = extract_middle_slice(image)
+                    image = read_medical_image(series_dir)
+                    image = resample_to_isotropic(image, new_spacing=(0.5, 0.5, 0.5))
+                    middle_slice = extract_middle_slice(image)
                 except Exception as e:
                     logger.debug(f"Error reading {series_dir}: {e}")
                     continue
@@ -369,6 +388,7 @@ def process_phenikaa(
                     ivd_locations = get_center_fallback_locations()
 
                 # Compute crop delta in pixels (from mm or direct pixel values)
+                spacing = image.GetSpacing()
                 if config.crop_delta_mm is not None:
                     crop_delta_px = mm_to_pixels(config.crop_delta_mm, spacing)
                 else:
@@ -390,7 +410,7 @@ def process_phenikaa(
 
                     center_x, center_y = ivd_locations[level_idx]
 
-                    crop = crop_ivd_region(
+                    crop = crop_region(
                         middle_slice, center_x, center_y, config.crop_size, crop_delta_px
                     )
 
@@ -481,7 +501,8 @@ def process_spider(
             if cache_key not in processed_images:
                 try:
                     image = read_medical_image(image_file)
-                    middle_slice, spacing = extract_middle_slice(image)
+                    image = resample_to_isotropic(image, new_spacing=(0.5, 0.5, 0.5))
+                    middle_slice = extract_middle_slice(image)
 
                     if model is not None:
                         ivd_locations = predict_ivd_locations(
@@ -490,6 +511,7 @@ def process_spider(
                     else:
                         ivd_locations = get_center_fallback_locations()
 
+                    spacing = image.GetSpacing()
                     processed_images[cache_key] = (middle_slice, ivd_locations, spacing)
                 except Exception as e:
                     logger.debug(f"Error processing {image_file}: {e}")
@@ -519,7 +541,7 @@ def process_spider(
 
                 center_x, center_y = ivd_locations[level_idx]
 
-                crop = crop_ivd_region(
+                crop = crop_region(
                     middle_slice, center_x, center_y, config.crop_size, crop_delta_px
                 )
                 crop_uint8 = normalize_to_uint8(crop)
