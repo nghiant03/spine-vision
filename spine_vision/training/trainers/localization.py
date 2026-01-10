@@ -1,7 +1,7 @@
 """Localization trainer for coordinate regression.
 
 Specialized trainer for IVD localization with configurable backbone.
-Uses HuggingFace Accelerate and supports wandb logging.
+Uses HuggingFace Accelerate and supports trackio logging.
 """
 
 from typing import Any, Literal
@@ -79,18 +79,14 @@ class LocalizationConfig(TrainingConfig):
     """Number of samples to visualize."""
 
 
-@register_trainer(
-    "localization",
-    config_cls=LocalizationConfig,
-    description="IVD localization with coordinate regression",
-)
+@register_trainer("localization", config_cls=LocalizationConfig)
 class LocalizationTrainer(
     BaseTrainer[LocalizationConfig, CoordinateRegressor, IVDCoordsDataset]
 ):
     """Trainer for IVD localization with coordinate regression.
 
     Uses HuggingFace Accelerate for distributed training and mixed precision.
-    Supports optional wandb logging for experiment tracking.
+    Supports optional trackio logging for experiment tracking.
 
     Uses training hooks instead of overriding the entire train loop:
     - on_train_begin: Log dataset stats
@@ -158,11 +154,11 @@ class LocalizationTrainer(
             level_names=list(IDX_TO_LEVEL.values()),
         )
 
-        # Visualizer with wandb support - save to logs/
+        # Visualizer with trackio support - save to logs/
         self.visualizer = TrainingVisualizer(
             output_path=config.logs_path,
             output_mode="html",
-            use_wandb=config.use_wandb,
+            use_trackio=config.use_trackio,
         )
 
         # Track backbone freeze state
@@ -497,9 +493,9 @@ class LocalizationTrainer(
         for key, value in metrics.items():
             logger.info(f"  {key}: {value:.4f}")
 
-        # Log to wandb
-        if self._wandb_initialized:
-            wandb_metrics = {f"test/{key}": value for key, value in metrics.items()}
-            self._log_to_wandb(wandb_metrics)
+        # Log to trackio
+        if self._trackio_initialized:
+            trackio_metrics = {f"test/{key}": value for key, value in metrics.items()}
+            self._log_to_trackio(trackio_metrics)
 
         return metrics

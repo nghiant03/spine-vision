@@ -43,10 +43,10 @@ def _train_localization(config: LocalizationConfig) -> None:
     logger.info(f"Learning rate: {config.learning_rate}")
     logger.info(f"Epochs: {config.num_epochs}")
     logger.info(f"Device: {config.device}")
-    if config.use_wandb:
-        logger.info(f"Wandb project: {config.wandb_project}")
-        if config.wandb_run_name:
-            logger.info(f"Wandb run name: {config.wandb_run_name}")
+    if config.use_trackio:
+        logger.info(f"Trackio project: {config.trackio_project}")
+        if config.trackio_run_name:
+            logger.info(f"Trackio run name: {config.trackio_run_name}")
 
     # Create trainer and run
     trainer = LocalizationTrainer(config)
@@ -79,10 +79,10 @@ def _train_classification(config: ClassificationConfig) -> None:
     logger.info(f"Learning rate: {config.learning_rate}")
     logger.info(f"Epochs: {config.num_epochs}")
     logger.info(f"Device: {config.device}")
-    if config.use_wandb:
-        logger.info(f"Wandb project: {config.wandb_project}")
-        if config.wandb_run_name:
-            logger.info(f"Wandb run name: {config.wandb_run_name}")
+    if config.use_trackio:
+        logger.info(f"Trackio project: {config.trackio_project}")
+        if config.trackio_run_name:
+            logger.info(f"Trackio run name: {config.trackio_run_name}")
 
     # Create trainer and run
     trainer = ClassificationTrainer(config)

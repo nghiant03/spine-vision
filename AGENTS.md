@@ -6,7 +6,7 @@ Library for lumbar spine MRI dataset creation, model training, and result visual
 - Dataset creation pipelines (nnUNet format, IVD coordinates, classification datasets)
 - OCR-based extraction of patient information from medical reports (for Phenikaa dataset)
 - Fuzzy matching of patient data across different data sources
-- Model training infrastructure with wandb integration
+- Model training infrastructure with trackio integration
 - Interactive visualization of training results and predictions
 
 ## Tech Stack
@@ -163,41 +163,42 @@ arr_uint8 = normalize_to_uint8(float_array)
 ### Datasets (`spine_vision.datasets`)
 ```python
 from spine_vision.datasets import (
-    ConvertConfig, convert_to_nnunet,
-    IVDDatasetConfig, create_ivd_dataset,
-    PreprocessConfig, preprocess_phenikaa,
-    ClassificationDatasetConfig, create_classification_dataset,
+    # Base classes
+    BaseProcessor, DatasetConfig, ProcessingResult,
+    # IVD coordinates
+    IVDDatasetConfig, IVDCoordsDatasetProcessor,
+    # Phenikaa preprocessing
+    PreprocessConfig, PhenikkaaProcessor,
+    # Classification dataset
+    ClassificationDatasetConfig, ClassificationDatasetProcessor,
+    # RSNA utilities
     load_series_mapping, get_series_type,
 )
-from spine_vision.datasets.labels import load_label_schema, remap_labels, LabelSchema
-
-# nnUNet conversion
-config = ConvertConfig(input_path=Path("data/raw/SPIDER"))
-convert_to_nnunet(config)
 
 # IVD coordinates dataset
 config = IVDDatasetConfig(base_path=Path("data"))
-create_ivd_dataset(config)
+processor = IVDCoordsDatasetProcessor(config)
+result = processor.process()
+print(f"Created {result.num_samples} IVD annotations at {result.output_path}")
 
 # Phenikaa preprocessing (supports both report formats)
 # - ID-named reports (250010139.png): extracts name/birthday from OCR
 # - Patient-named reports (NGUYEN_VAN_SON_20250718.pdf): extracts ID from OCR
 config = PreprocessConfig(data_path=Path("data/raw/Phenikaa"))
-preprocess_phenikaa(config)
+processor = PhenikkaaProcessor(config)
+result = processor.process()
+print(result.summary)  # "Matched X of Y patients"
 
 # Classification dataset (Phenikaa + SPIDER with IVD cropping)
 config = ClassificationDatasetConfig(
     base_path=Path("data"),
     localization_model_path=Path("weights/localization/model.pt"),
     crop_size=(64, 64),
-    crop_delta=(96, 32, 64, 64),  # left, right, top, bottom in pixels
-    # Or: crop_delta_mm=(50.0, 20.0, 30.0, 30.0),  # in mm (takes precedence)
+    crop_delta_mm=(50.0, 20.0, 30.0, 30.0),  # left, right, top, bottom in mm
 )
-create_classification_dataset(config)
-
-# Label schema management
-schema = load_label_schema("spider")  # or Path("custom.yaml")
-remapped = remap_labels(mask_array, schema.mapping)
+processor = ClassificationDatasetProcessor(config)
+result = processor.process()
+print(f"Created {result.num_samples} classification samples")
 ```
 
 ### Phenikaa OCR/Matching (`spine_vision.datasets.phenikaa`)
@@ -249,7 +250,7 @@ config = LocalizationConfig(
     model_variant="base",
     batch_size=32,
     num_epochs=100,
-    use_wandb=True,
+    use_trackio=True,
 )
 trainer = LocalizationTrainer(config)
 result = trainer.train()
@@ -259,7 +260,7 @@ config = ClassificationConfig(
     data_path=Path("data/processed/classification"),
     output_size=(224, 224),
     dropout=0.3,
-    use_wandb=True,
+    use_trackio=True,
 )
 trainer = ClassificationTrainer(config)
 result = trainer.train()
@@ -296,8 +297,7 @@ metrics = trainer.evaluate(visualize=True)
 | `--base-path` | Base data directory | `data` |
 | `--localization-model-path` | Path to trained localization model | None |
 | `--crop-size` | Output size of cropped IVD regions (H W) | `128 128` |
-| `--crop-delta` | Crop deltas (left right top bottom) in pixels | `96 32 64 64` |
-| `--crop-delta-mm` | Crop deltas in mm (takes precedence) | None |
+| `--crop-delta-mm` | Crop deltas (left right top bottom) in mm | `50.0 20.0 30.0 30.0` |
 | `--include-phenikaa` | Include Phenikaa dataset | `True` |
 | `--include-spider` | Include SPIDER dataset | `True` |
 | `-v, --verbose` | Debug logging | `False` |
@@ -310,7 +310,7 @@ metrics = trainer.evaluate(visualize=True)
 | `--batch-size` | Training batch size | `32` |
 | `--num-epochs` | Number of training epochs | `100` |
 | `--learning-rate` | Learning rate | `1e-4` |
-| `--use-wandb` | Enable wandb logging | `False` |
+| `--use-trackio` | Enable trackio logging | `False` |
 | `-v, --verbose` | Debug logging | `False` |
 
 ### spine-vision train classification
@@ -320,7 +320,7 @@ metrics = trainer.evaluate(visualize=True)
 | `--output-size` | Final input size to model (H W) | `224 224` |
 | `--target-labels` | Filter to specific labels | None (all) |
 | `--dropout` | Dropout rate | `0.3` |
-| `--use-wandb` | Enable wandb logging | `False` |
+| `--use-trackio` | Enable trackio logging | `False` |
 | `-v, --verbose` | Debug logging | `False` |
 
 ## Adding New Components
@@ -344,17 +344,54 @@ mapping:
 Add a new dataset module in `spine_vision/datasets/`:
 ```python
 # spine_vision/datasets/my_dataset.py
-from pydantic import BaseModel
+from spine_vision.datasets.base import BaseProcessor, DatasetConfig, ProcessingResult
 
-class MyDatasetConfig(BaseModel):
-    input_path: Path
-    output_path: Path
+class MyDatasetConfig(DatasetConfig):
+    """Configuration for my dataset."""
+    custom_param: str = "value"
+
+class MyDatasetProcessor(BaseProcessor[MyDatasetConfig]):
+    """Processor for creating my dataset."""
+
+    def __init__(self, config: MyDatasetConfig) -> None:
+        super().__init__(config)
+        setup_logger(verbose=config.verbose)
+        if config.enable_file_log:
+            add_file_log(config.log_path)
+
+    def process(self) -> ProcessingResult:
+        """Execute dataset creation pipeline."""
+        self.on_process_begin()
+
+        # Your processing logic here
+        num_samples = 100
+
+        result = ProcessingResult(
+            num_samples=num_samples,
+            output_path=self.config.output_path,
+            summary=f"Processed {num_samples} samples",
+        )
+
+        self.on_process_end(result)
+        return result
 
 def main(config: MyDatasetConfig) -> None:
-    ...
+    """Convenience wrapper for backward compatibility."""
+    processor = MyDatasetProcessor(config)
+    result = processor.process()
+    logger.info(result.summary)
 ```
 
-Then register it in `spine_vision/cli/__init__.py`.
+Then register it in `spine_vision/cli/__init__.py`:
+```python
+from spine_vision.datasets.my_dataset import MyDatasetConfig, MyDatasetProcessor
+
+# In cli() function:
+case MyDatasetConfig():
+    processor = MyDatasetProcessor(cmd)
+    result = processor.process()
+    logger.info(result.summary)
+```
 
 ### New Training Model
 ```python
@@ -390,7 +427,7 @@ class MyModel(BaseModel):
 6. **nnUNet source**: Installed from GitHub via uv sources
 7. **Training backend**: Uses HuggingFace Accelerate for distributed training
 8. **Model backbones**: Uses timm for pretrained models
-9. **Wandb logging**: Optional integration for experiment tracking
+9. **Trackio logging**: Optional integration for experiment tracking
 
 ## Testing
 

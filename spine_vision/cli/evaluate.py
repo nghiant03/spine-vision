@@ -1,7 +1,7 @@
 """Evaluate CLI for trained classification models.
 
 Evaluates a trained model on the test dataset with optional visualization
-and wandb logging. Generates test sample visualizations with labels overlaid.
+and trackio logging. Generates test sample visualizations with labels overlaid.
 """
 
 from pathlib import Path
@@ -14,7 +14,7 @@ from spine_vision.core import BaseConfig, setup_logger
 class EvaluateConfig(BaseConfig):
     """Configuration for model evaluation on test set.
 
-    Supports classification task with visualization and wandb logging.
+    Supports classification task with visualization and trackio logging.
     """
 
     # Required parameters
@@ -55,15 +55,15 @@ class EvaluateConfig(BaseConfig):
     output_path: Path | None = None
     """Output directory for visualizations. Defaults to model directory."""
 
-    # Wandb options
-    use_wandb: bool = False
-    """Log evaluation results and visualizations to wandb."""
+    # Trackio options
+    use_trackio: bool = False
+    """Log evaluation results and visualizations to trackio."""
 
-    wandb_project: str = "spine-vision"
-    """Wandb project name."""
+    trackio_project: str = "spine-vision"
+    """Trackio project name."""
 
-    wandb_run_name: str | None = None
-    """Wandb run name. Defaults to 'eval-<model_name>'."""
+    trackio_run_name: str | None = None
+    """Trackio run name. Defaults to 'eval-<model_name>'."""
 
     # Inference parameters
     device: str = "cuda:0"
@@ -104,15 +104,15 @@ def main(config: EvaluateConfig) -> dict[str, float]:
     output_path = config.output_path or config.model_path.parent / "evaluation"
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Initialize wandb if enabled
-    wandb_run = None
-    if config.use_wandb:
+    # Initialize trackio if enabled
+    trackio_run = None
+    if config.use_trackio:
         try:
-            import wandb
+            import trackio
 
-            run_name = config.wandb_run_name or f"eval-{config.model_path.stem}"
-            wandb_run = wandb.init(
-                project=config.wandb_project,
+            run_name = config.trackio_run_name or f"eval-{config.model_path.stem}"
+            trackio_run = trackio.init(
+                project=config.trackio_project,
                 name=run_name,
                 config={
                     "model_path": str(config.model_path),
@@ -121,13 +121,12 @@ def main(config: EvaluateConfig) -> dict[str, float]:
                     "output_size": config.output_size,
                     "levels": config.levels,
                     "target_labels": config.target_labels,
-                },
-                job_type="evaluation",
+                }
             )
-            logger.info(f"Wandb run initialized: {run_name}")
+            logger.info(f"Trackio run initialized: {run_name}")
         except ImportError:
-            logger.warning("wandb not installed. Disabling wandb logging.")
-            config.use_wandb = False
+            logger.warning("trackio not installed. Disabling trackio logging.")
+            config.use_trackio = False
 
     # Create test dataset
     target_labels = config.target_labels or list(AVAILABLE_LABELS)
@@ -196,7 +195,7 @@ def main(config: EvaluateConfig) -> dict[str, float]:
     visualizer = TrainingVisualizer(
         output_path=output_path,
         output_mode="html",
-        use_wandb=config.use_wandb,
+        use_trackio=config.use_trackio,
     )
 
     # Evaluate
@@ -282,11 +281,11 @@ def main(config: EvaluateConfig) -> dict[str, float]:
 
         logger.info(f"Visualizations saved to: {output_path}")
 
-    # Log to wandb
-    if config.use_wandb and wandb_run is not None:
-        import wandb
+    # Log to trackio
+    if config.use_trackio and trackio_run is not None:
+        import trackio
 
-        wandb.log({f"eval/{k}": v for k, v in eval_metrics.items()})
-        wandb.finish()
+        trackio.log({f"eval/{k}": v for k, v in eval_metrics.items()})
+        trackio.finish()
 
     return eval_metrics

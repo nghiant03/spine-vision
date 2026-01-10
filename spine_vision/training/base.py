@@ -4,7 +4,7 @@ Provides abstract interfaces for models and trainers that can be extended
 for various tasks (localization, classification, segmentation).
 
 Uses HuggingFace Accelerate for distributed training and mixed precision,
-with optional wandb logging.
+with optional Trackio logging.
 """
 
 import uuid
@@ -108,11 +108,11 @@ class TrainingConfig(BaseConfig):
     log_frequency: int = 10
     save_frequency: int = 10
 
-    # Wandb logging
-    use_wandb: bool = False
-    wandb_project: str = "spine-vision"
-    wandb_run_name: str | None = None
-    wandb_tags: list[str] | None = None
+    # Trackio logging
+    use_trackio: bool = False
+    trackio_project: str = "spine-vision"
+    trackio_run_name: str | None = None
+    trackio_tags: list[str] | None = None
 
     # Reproducibility
     seed: int = 42
@@ -132,9 +132,9 @@ class TrainingConfig(BaseConfig):
                 self, "output_path", Path("weights") / self.task / self.run_id
             )
 
-        # Sync wandb_run_name with run_id if not provided
-        if self.use_wandb and self.wandb_run_name is None:
-            object.__setattr__(self, "wandb_run_name", self.run_id)
+        # Sync trackio_run_name with run_id if not provided
+        if self.use_trackio and self.trackio_run_name is None:
+            object.__setattr__(self, "trackio_run_name", self.run_id)
 
         return self
 
@@ -214,14 +214,15 @@ class BaseModel(nn.Module, ABC):
         ...
 
     @abstractmethod
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs: Any) -> Any:
         """Forward pass.
 
         Args:
             x: Input tensor.
+            **kwargs: Additional model-specific arguments.
 
         Returns:
-            Model output tensor.
+            Model output (tensor or dict of tensors for multi-task models).
         """
         ...
 
@@ -244,18 +245,19 @@ class BaseModel(nn.Module, ABC):
         """
         ...
 
-    def predict(self, x: torch.Tensor) -> torch.Tensor:
+    def predict(self, x: torch.Tensor, **kwargs: Any) -> Any:
         """Run inference without gradients.
 
         Args:
             x: Input tensor.
+            **kwargs: Additional model-specific arguments.
 
         Returns:
             Model predictions.
         """
         self.eval()
         with torch.no_grad():
-            return self.forward(x)
+            return self.forward(x, **kwargs)
 
     def test_inference(
         self,
@@ -358,20 +360,14 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
 
     Provides common training loop, validation, checkpointing, and logging.
     Uses HuggingFace Accelerate for distributed training and mixed precision.
-    Supports optional wandb logging for experiment tracking.
+    Supports optional trackio logging for experiment tracking.
 
     Subclass this for task-specific training logic.
 
     Training Hooks (override these for custom behavior):
-        - on_train_begin(): Called before training starts
-        - on_train_end(): Called after training completes
-        - on_epoch_begin(epoch): Called at start of each epoch
-        - on_epoch_end(epoch, train_loss, val_loss, metrics): Called at end of each epoch
-        - on_batch_begin(batch_idx, batch): Called before each training batch
-        - on_batch_end(batch_idx, batch, loss): Called after each training batch
-        - on_validation_begin(): Called before validation
-        - on_validation_end(val_loss, metrics): Called after validation
-        - get_metric_for_checkpoint(val_loss, metrics): Return metric for checkpointing
+        - on_epoch_end(epoch, metrics): Called at end of each epoch for custom logging/visualization
+        - on_train_end(result): Called after training completes for final processing
+        - get_metric_for_checkpoint(val_loss, metrics): Return metric value for saving best model
     """
 
     def __init__(
@@ -396,7 +392,7 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
 
         # Initialize Accelerator for distributed training and mixed precision
         mixed_precision = "fp16" if config.mixed_precision else "no"
-        log_with = "wandb" if config.use_wandb else None
+        log_with = "trackio" if config.use_trackio else None
 
         self.accelerator = Accelerator(
             mixed_precision=mixed_precision,
@@ -456,51 +452,51 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         # Set seed for reproducibility
         self._set_seed(config.seed)
 
-        # Initialize wandb if enabled
-        self._wandb_initialized = False
-        if config.use_wandb and self.accelerator.is_main_process:
-            self._init_wandb()
+        # Initialize trackio if enabled
+        self._trackio_initialized = False
+        if config.use_trackio and self.accelerator.is_main_process:
+            self._init_trackio()
 
-    def _init_wandb(self) -> None:
-        """Initialize wandb tracking."""
+    def _init_trackio(self) -> None:
+        """Initialize trackio tracking."""
         try:
-            import wandb  # noqa: F401
+            import trackio  # noqa: F401
         except ImportError:
-            logger.warning("wandb not installed. Disabling wandb logging.")
-            logger.info("Install with: uv sync --extra wandb")
-            self.config.use_wandb = False
+            logger.warning("trackio not installed. Disabling trackio logging.")
+            logger.info("Install with: uv sync --extra trackio")
+            self.config.use_trackio = False
             return
 
-        # Convert config to dict with Path objects as strings for wandb
-        wandb_config = {}
+        # Convert config to dict with Path objects as strings for trackio
+        trackio_config = {}
         for key, value in self.config.model_dump().items():
             if isinstance(value, Path):
-                wandb_config[key] = str(value)
+                trackio_config[key] = str(value)
             else:
-                wandb_config[key] = value
+                trackio_config[key] = value
 
-        wandb_config["model_name"] = getattr(self.model, "name", "unknown")
-        wandb_config["num_parameters"] = self._count_model_parameters()
+        trackio_config["model_name"] = getattr(self.model, "name", "unknown")
+        trackio_config["num_parameters"] = self._count_model_parameters()
 
         # Explicitly log run_id and output_path for mapping
-        wandb_config["run_id"] = self.config.run_id
-        wandb_config["output_path"] = str(self.config.output_path)
-        wandb_config["logs_path"] = str(self.config.logs_path)
+        trackio_config["run_id"] = self.config.run_id
+        trackio_config["output_path"] = str(self.config.output_path)
+        trackio_config["logs_path"] = str(self.config.logs_path)
 
         self.accelerator.init_trackers(
-            project_name=self.config.wandb_project,
-            config=wandb_config,
+            project_name=self.config.trackio_project,
+            config=trackio_config,
             init_kwargs={
-                "wandb": {
-                    "name": self.config.wandb_run_name,
-                    "tags": self.config.wandb_tags,
+                "trackio": {
+                    "name": self.config.trackio_run_name,
+                    "tags": self.config.trackio_tags,
                     "dir": str(self.config.output_path),
                 }
             },
         )
-        self._wandb_initialized = True
-        logger.info(f"Initialized wandb project: {self.config.wandb_project}")
-        logger.info(f"Wandb run name: {self.config.wandb_run_name}")
+        self._trackio_initialized = True
+        logger.info(f"Initialized trackio project: {self.config.trackio_project}")
+        logger.info(f"Trackio run name: {self.config.trackio_run_name}")
         logger.info(f"Run ID: {self.config.run_id}")
 
     def _count_model_parameters(self) -> int:
@@ -510,13 +506,13 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             return model.count_parameters()
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    def _log_to_wandb(
+    def _log_to_trackio(
         self,
         metrics: dict[str, float],
         step: int | None = None,
     ) -> None:
-        """Log metrics to wandb if enabled."""
-        if self._wandb_initialized and self.accelerator.is_main_process:
+        """Log metrics to trackio if enabled."""
+        if self._trackio_initialized and self.accelerator.is_main_process:
             self.accelerator.log(metrics, step=step)
 
     def _set_seed(self, seed: int) -> None:
@@ -598,21 +594,15 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         logger.info(f"Train samples: {len(self.train_dataset)}")  # type: ignore[arg-type]
         if self.val_dataset:
             logger.info(f"Val samples: {len(self.val_dataset)}")  # type: ignore[arg-type]
-        if self.config.use_wandb:
-            logger.info(f"Logging to wandb project: {self.config.wandb_project}")
+        if self.config.use_trackio:
+            logger.info(f"Logging to trackio project: {self.config.trackio_project}")
 
         # Load checkpoint if specified
         if self.config.checkpoint_path:
             self._load_checkpoint(self.config.checkpoint_path)
 
-        # Hook: training begins
-        self.on_train_begin()
-
         for epoch in range(self.current_epoch, self.config.num_epochs):
             self.current_epoch = epoch
-
-            # Hook: epoch begins
-            self.on_epoch_begin(epoch)
 
             # Training epoch
             train_loss = self._train_epoch()
@@ -623,9 +613,6 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             val_loss: float | None = None
             metrics: dict[str, float] = {}
             if self.val_loader and (epoch + 1) % self.config.val_frequency == 0:
-                # Hook: validation begins
-                self.on_validation_begin()
-
                 val_loss, metrics = self._validate_epoch()
                 self.history["val_loss"].append(val_loss)
 
@@ -634,9 +621,6 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
                     if key not in self.history:
                         self.history[key] = []
                     self.history[key].append(value)
-
-                # Hook: validation ends
-                self.on_validation_end(val_loss, metrics)
 
             # Learning rate scheduling
             if self.scheduler:
@@ -651,19 +635,20 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             # Logging
             self._log_epoch(epoch, train_loss, val_loss, metrics)
 
-            # Log to wandb
-            wandb_metrics = {
+            # Log to trackio
+            trackio_metrics = {
                 "train/loss": train_loss,
                 "train/lr": self.optimizer.param_groups[0]["lr"],
             }
             if val_loss is not None:
-                wandb_metrics["val/loss"] = val_loss
+                trackio_metrics["val/loss"] = val_loss
             for key, value in metrics.items():
-                wandb_metrics[f"val/{key}"] = value
-            self._log_to_wandb(wandb_metrics, step=epoch)
+                trackio_metrics[f"val/{key}"] = value
+            self._log_to_trackio(trackio_metrics, step=epoch)
 
-            # Hook: epoch ends
-            self.on_epoch_end(epoch, train_loss, val_loss, metrics)
+            # Hook: epoch ends (with all metrics for custom processing)
+            epoch_metrics = {"train_loss": train_loss, "val_loss": val_loss, **metrics}
+            self.on_epoch_end(epoch, epoch_metrics)
 
             # Checkpointing - use hook to get metric
             metric_for_checkpoint = self.get_metric_for_checkpoint(val_loss, metrics)
@@ -707,10 +692,10 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         # Hook: training ends
         self.on_train_end(result)
 
-        # End wandb run
-        if self._wandb_initialized:
+        # End trackio run
+        if self._trackio_initialized:
             self.accelerator.end_training()
-            self._wandb_initialized = False
+            self._trackio_initialized = False
 
         return result
 
@@ -725,15 +710,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         num_batches = 0
 
         for batch_idx, batch in enumerate(self.train_loader):
-            # Hook: batch begins
-            self.on_batch_begin(batch_idx, batch)
-
             loss = self._train_step(batch)
             total_loss += loss
             num_batches += 1
-
-            # Hook: batch ends
-            self.on_batch_end(batch_idx, batch, loss)
 
             if (batch_idx + 1) % self.config.log_frequency == 0:
                 avg_loss = total_loss / num_batches
@@ -912,12 +891,17 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         logger.info(f"Loaded checkpoint from epoch {checkpoint['epoch'] + 1}")
 
     # ==================== Training Hooks ====================
-    # Override these methods for custom behavior without copying the entire training loop
+    # Override these methods for custom behavior
 
-    def on_train_begin(self) -> None:
-        """Called before training starts.
+    def on_epoch_end(self, epoch: int, metrics: dict[str, float]) -> None:
+        """Called at the end of each epoch.
 
-        Use this to initialize custom state, logging, or perform setup.
+        Args:
+            epoch: Current epoch number (0-indexed).
+            metrics: Combined metrics including 'train_loss', 'val_loss', and validation metrics.
+
+        Use this for custom logging, visualization, or state updates.
+        Override for task-specific behavior like saving visualizations.
         """
         pass
 
@@ -928,80 +912,6 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             result: Training result with metrics and checkpoint path.
 
         Use this for final visualizations, cleanup, or post-processing.
-        """
-        pass
-
-    def on_epoch_begin(self, epoch: int) -> None:
-        """Called at the start of each epoch.
-
-        Args:
-            epoch: Current epoch number (0-indexed).
-
-        Use this to adjust learning rate, unfreeze layers, or update state.
-        """
-        pass
-
-    def on_epoch_end(
-        self,
-        epoch: int,
-        train_loss: float,
-        val_loss: float | None,
-        metrics: dict[str, float],
-    ) -> None:
-        """Called at the end of each epoch.
-
-        Args:
-            epoch: Current epoch number (0-indexed).
-            train_loss: Average training loss for the epoch.
-            val_loss: Average validation loss (None if no validation).
-            metrics: Dictionary of validation metrics.
-
-        Use this for custom logging, visualization, or state updates.
-        """
-        pass
-
-    def on_batch_begin(self, batch_idx: int, batch: Any) -> None:
-        """Called before processing each training batch.
-
-        Args:
-            batch_idx: Batch index within the epoch.
-            batch: The batch data.
-
-        Use this for batch-level adjustments or logging.
-        """
-        pass
-
-    def on_batch_end(self, batch_idx: int, batch: Any, loss: float) -> None:
-        """Called after processing each training batch.
-
-        Args:
-            batch_idx: Batch index within the epoch.
-            batch: The batch data.
-            loss: Loss value for this batch.
-
-        Use this for batch-level logging or gradient analysis.
-        """
-        pass
-
-    def on_validation_begin(self) -> None:
-        """Called before validation starts.
-
-        Use this to reset metrics accumulators or prepare for validation.
-        """
-        pass
-
-    def on_validation_end(
-        self,
-        val_loss: float,
-        metrics: dict[str, float],
-    ) -> None:
-        """Called after validation completes.
-
-        Args:
-            val_loss: Average validation loss.
-            metrics: Dictionary of validation metrics.
-
-        Use this for validation visualization or analysis.
         """
         pass
 

@@ -9,7 +9,7 @@ Provides visualization tools for:
 - Test sample visualization with labels
 - Classification confusion analysis (TP/TN/FP/FN examples)
 
-Supports optional wandb logging for experiment tracking.
+Supports optional trackio logging for experiment tracking.
 """
 
 from pathlib import Path
@@ -204,50 +204,50 @@ class TrainingVisualizer:
     """Visualizer for training progress and validation results.
 
     Generates interactive plots for training curves, predictions,
-    and error analysis. Optionally logs to wandb.
+    and error analysis. Optionally logs to trackio.
     """
 
     def __init__(
         self,
         output_path: Path | None = None,
         output_mode: Literal["browser", "html", "image"] = "html",
-        use_wandb: bool = False,
+        use_trackio: bool = False,
     ) -> None:
         """Initialize visualizer.
 
         Args:
             output_path: Directory for saving visualizations.
             output_mode: Output format ('browser', 'html', 'image').
-            use_wandb: If True, also log visualizations to wandb.
+            use_trackio: If True, also log visualizations to trackio.
         """
         self.output_path = output_path
         self.output_mode = output_mode
-        self.use_wandb = use_wandb
-        self._wandb: Any = None
+        self.use_trackio = use_trackio
+        self._trackio: Any = None
 
         if output_path:
             output_path.mkdir(parents=True, exist_ok=True)
 
-        if use_wandb:
+        if use_trackio:
             try:
-                import wandb
-                self._wandb = wandb
+                import trackio
+                self._trackio = trackio
             except ImportError:
-                logger.warning("wandb not installed. Disabling wandb logging.")
-                self.use_wandb = False
+                logger.warning("trackio not installed. Disabling trackio logging.")
+                self.use_trackio = False
 
     def plot_training_curves(
         self,
         history: dict[str, list[float]],
         filename: str = "training_curves",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot training loss and metrics over epochs.
 
         Args:
             history: Dictionary with keys like 'train_loss', 'val_loss', 'lr', etc.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -355,7 +355,7 @@ class TrainingVisualizer:
         )
         fig.update_xaxes(title_text="Epoch")
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
         return fig
 
     def plot_localization_predictions(
@@ -366,7 +366,7 @@ class TrainingVisualizer:
         metadata: list[dict[str, Any]] | None = None,
         num_samples: int = 16,
         filename: str = "localization_predictions",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot localization predictions overlaid on images.
 
@@ -377,7 +377,7 @@ class TrainingVisualizer:
             metadata: Optional list of metadata dicts per sample.
             num_samples: Maximum number of samples to show.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -476,11 +476,11 @@ class TrainingVisualizer:
             width=250 * n_cols,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Also log individual images to wandb if enabled
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            self._log_prediction_images_to_wandb(
+        # Also log individual images to trackio if enabled
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            self._log_prediction_images_to_trackio(
                 images[:n_samples],
                 predictions[:n_samples],
                 targets[:n_samples],
@@ -489,18 +489,18 @@ class TrainingVisualizer:
 
         return fig
 
-    def _log_prediction_images_to_wandb(
+    def _log_prediction_images_to_trackio(
         self,
         images: list[np.ndarray],
         predictions: np.ndarray,
         targets: np.ndarray,
         metadata: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Log prediction images to wandb."""
-        if self._wandb is None:
+        """Log prediction images to trackio."""
+        if self._trackio is None:
             return
 
-        wandb_images = []
+        trackio_images = []
         for i, img in enumerate(images):
             h, w = img.shape[:2]
             pred_x, pred_y = predictions[i] * [w, h]
@@ -510,7 +510,7 @@ class TrainingVisualizer:
             if metadata and i < len(metadata):
                 caption = metadata[i].get("level", "")
 
-            # Create wandb image with bounding boxes
+            # Create trackio image with bounding boxes
             boxes = [
                 {
                     "position": {"middle": [float(gt_x), float(gt_y)], "width": 10, "height": 10},
@@ -524,14 +524,14 @@ class TrainingVisualizer:
                 },
             ]
 
-            wandb_img = self._wandb.Image(
+            trackio_img = self._trackio.Image(
                 img,
                 caption=caption,
                 boxes={"predictions": {"box_data": boxes, "class_labels": {0: "GT", 1: "Pred"}}},
             )
-            wandb_images.append(wandb_img)
+            trackio_images.append(trackio_img)
 
-        self._wandb.log({"predictions": wandb_images})
+        self._trackio.log({"predictions": trackio_images})
 
     def plot_error_distribution(
         self,
@@ -540,7 +540,7 @@ class TrainingVisualizer:
         levels: np.ndarray | None = None,
         level_names: list[str] | None = None,
         filename: str = "error_distribution",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot error distribution analysis.
 
@@ -550,7 +550,7 @@ class TrainingVisualizer:
             levels: Optional level indices [N].
             level_names: Names for each level.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -662,11 +662,11 @@ class TrainingVisualizer:
             showlegend=True,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Log summary stats to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            self._wandb.log({
+        # Log summary stats to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            self._trackio.log({
                 "error/mean_distance": float(np.mean(distances)),
                 "error/std_distance": float(np.std(distances)),
                 "error/median_distance": float(np.median(distances)),
@@ -681,7 +681,7 @@ class TrainingVisualizer:
         level_names: list[str],
         metric_prefix: str = "med_",
         filename: str = "per_level_metrics",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot per-level metric comparison.
 
@@ -690,7 +690,7 @@ class TrainingVisualizer:
             level_names: Names of levels.
             metric_prefix: Prefix for per-level metrics in dict.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -732,14 +732,14 @@ class TrainingVisualizer:
             height=400,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Log per-level metrics to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            wandb_metrics = {f"per_level/{label}": val for label, val in zip(labels, values)}
+        # Log per-level metrics to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            trackio_metrics = {f"per_level/{label}": val for label, val in zip(labels, values)}
             if values:
-                wandb_metrics["per_level/average"] = float(np.mean(values))
-            self._wandb.log(wandb_metrics)
+                trackio_metrics["per_level/average"] = float(np.mean(values))
+            self._trackio.log(trackio_metrics)
 
         return fig
 
@@ -750,7 +750,7 @@ class TrainingVisualizer:
         target: np.ndarray,
         level: str = "",
         filename: str = "sample",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Visualize a single sample with prediction overlay.
 
@@ -760,7 +760,7 @@ class TrainingVisualizer:
             target: Ground truth coordinates [2] in relative [0, 1].
             level: Level label for title.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -829,7 +829,7 @@ class TrainingVisualizer:
             width=500,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
         return fig
 
     def log_table(
@@ -837,31 +837,31 @@ class TrainingVisualizer:
         data: dict[str, list[Any]],
         table_name: str = "results",
     ) -> None:
-        """Log a table to wandb.
+        """Log a table to trackio.
 
         Args:
             data: Dictionary where keys are column names and values are column data.
-            table_name: Name for the wandb table.
+            table_name: Name for the trackio table.
         """
-        if self._wandb is not None and self.use_wandb:
-            table = self._wandb.Table(columns=list(data.keys()))
+        if self._trackio is not None and self.use_trackio:
+            table = self._trackio.Table(columns=list(data.keys()))
             n_rows = len(next(iter(data.values())))
             for i in range(n_rows):
                 row = [data[col][i] for col in data.keys()]
                 table.add_data(*row)
-            self._wandb.log({table_name: table})
+            self._trackio.log({table_name: table})
 
-    def _should_log_to_wandb(self, override: bool | None) -> bool:
-        """Determine if should log to wandb."""
+    def _should_log_to_trackio(self, override: bool | None) -> bool:
+        """Determine if should log to trackio."""
         if override is not None:
-            return override and self._wandb is not None
-        return self.use_wandb and self._wandb is not None
+            return override and self._trackio is not None
+        return self.use_trackio and self._trackio is not None
 
     def _save_figure(
         self,
         fig: go.Figure,
         filename: str,
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> None:
         """Save figure according to output mode."""
         if self.output_mode == "browser":
@@ -880,9 +880,9 @@ class TrainingVisualizer:
                 path = self.output_path / f"{filename}.html"
                 fig.write_html(path)
 
-        # Log to wandb if enabled
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            self._wandb.log({filename: fig})
+        # Log to trackio if enabled
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            self._trackio.log({filename: fig})
 
     # ==================== Classification Visualization ====================
 
@@ -894,7 +894,7 @@ class TrainingVisualizer:
         metadata: list[dict[str, Any]] | None = None,
         num_samples: int = 16,
         filename: str = "classification_predictions",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot classification predictions overlaid on images.
 
@@ -908,7 +908,7 @@ class TrainingVisualizer:
             metadata: Optional list of metadata dicts per sample (level, patient_id).
             num_samples: Maximum number of samples to show.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -1002,11 +1002,11 @@ class TrainingVisualizer:
             showlegend=False,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Also log individual images to wandb if enabled
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            self._log_classification_images_to_wandb(
+        # Also log individual images to trackio if enabled
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            self._log_classification_images_to_trackio(
                 images[:n_samples],
                 {k: v[:n_samples] for k, v in predictions.items()},
                 {k: v[:n_samples] for k, v in targets.items()},
@@ -1015,18 +1015,18 @@ class TrainingVisualizer:
 
         return fig
 
-    def _log_classification_images_to_wandb(
+    def _log_classification_images_to_trackio(
         self,
         images: list[np.ndarray],
         predictions: dict[str, np.ndarray],
         targets: dict[str, np.ndarray],
         metadata: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Log classification prediction images to wandb."""
-        if self._wandb is None:
+        """Log classification prediction images to trackio."""
+        if self._trackio is None:
             return
 
-        wandb_images = []
+        trackio_images = []
         labels = list(predictions.keys())
 
         for i, img in enumerate(images):
@@ -1049,17 +1049,17 @@ class TrainingVisualizer:
                 caption_parts.append(f"{display_name}: {pred_val}/{gt_val} {status}")
 
             caption = " | ".join(caption_parts)
-            wandb_img = self._wandb.Image(img, caption=caption)
-            wandb_images.append(wandb_img)
+            trackio_img = self._trackio.Image(img, caption=caption)
+            trackio_images.append(trackio_img)
 
-        self._wandb.log({"classification_predictions": wandb_images})
+        self._trackio.log({"classification_predictions": trackio_images})
 
     def plot_classification_metrics(
         self,
         metrics: dict[str, float],
         target_labels: list[str] | None = None,
         filename: str = "classification_metrics",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot per-label classification metrics.
 
@@ -1069,7 +1069,7 @@ class TrainingVisualizer:
             metrics: Dictionary of metrics (e.g., pfirrmann_accuracy, modic_f1).
             target_labels: List of labels to include. If None, auto-detect from metrics.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -1131,11 +1131,11 @@ class TrainingVisualizer:
             width=900,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Log to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            self._wandb.log({f"metrics/{k}": v for k, v in metrics.items()})
+        # Log to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            self._trackio.log({f"metrics/{k}": v for k, v in metrics.items()})
 
         return fig
 
@@ -1144,7 +1144,7 @@ class TrainingVisualizer:
         confusion_matrices: dict[str, np.ndarray],
         class_names: dict[str, list[str]] | None = None,
         filename: str = "confusion_matrices",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot confusion matrices for classification labels.
 
@@ -1152,7 +1152,7 @@ class TrainingVisualizer:
             confusion_matrices: Dict mapping label names to confusion matrices [C, C].
             class_names: Dict mapping label names to class name lists.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -1217,14 +1217,14 @@ class TrainingVisualizer:
             width=350 * n_cols,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Log to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            # Log as wandb confusion matrix artifact
+        # Log to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            # Log as trackio confusion matrix artifact
             for label, cm in confusion_matrices.items():
                 names = class_names.get(label, [str(i) for i in range(cm.shape[0])]) if class_names else [str(i) for i in range(cm.shape[0])]
-                self._wandb.log({f"confusion_matrix/{label}": self._wandb.plot.confusion_matrix(
+                self._trackio.log({f"confusion_matrix/{label}": self._trackio.plot.confusion_matrix(
                     probs=None,
                     y_true=list(range(cm.shape[0])) * int(cm.sum()),  # placeholder
                     preds=list(range(cm.shape[1])) * int(cm.sum()),  # placeholder
@@ -1243,7 +1243,7 @@ class TrainingVisualizer:
         class_names: list[str] | None = None,
         max_samples_per_cell: int = 4,
         filename: str | None = None,
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot confusion matrix with sample images from each cell.
 
@@ -1260,7 +1260,7 @@ class TrainingVisualizer:
             class_names: Optional list of class names for display.
             max_samples_per_cell: Maximum samples to show per confusion matrix cell.
             filename: Output filename. Defaults to "confusion_matrix_samples_{target_label}".
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure with confusion matrix and sample images.
@@ -1457,11 +1457,11 @@ class TrainingVisualizer:
         )
 
         output_filename = filename or f"confusion_matrix_samples_{target_label}"
-        self._save_figure(fig, output_filename, log_to_wandb)
+        self._save_figure(fig, output_filename, log_to_trackio)
 
-        # Log to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            self._wandb.log({
+        # Log to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            self._trackio.log({
                 f"confusion_matrix_samples/{target_label}": fig,
             })
 
@@ -1477,7 +1477,7 @@ class TrainingVisualizer:
         class_names: dict[str, list[str]] | None = None,
         max_samples_per_cell: int = 4,
         filename_prefix: str = "confusion_matrix_samples",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> dict[str, go.Figure]:
         """Plot confusion matrices with samples for multiple labels.
 
@@ -1493,7 +1493,7 @@ class TrainingVisualizer:
             class_names: Dict mapping label names to class name lists.
             max_samples_per_cell: Maximum samples per confusion matrix cell.
             filename_prefix: Prefix for output filenames.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Dictionary mapping label names to their Plotly figures.
@@ -1517,7 +1517,7 @@ class TrainingVisualizer:
                 class_names=label_class_names,
                 max_samples_per_cell=max_samples_per_cell,
                 filename=f"{filename_prefix}_{label}",
-                log_to_wandb=log_to_wandb,
+                log_to_trackio=log_to_trackio,
             )
             figures[label] = fig
 
@@ -1531,7 +1531,7 @@ class TrainingVisualizer:
         metadata: list[dict[str, Any]] | None = None,
         num_samples: int = 16,
         filename: str = "test_samples",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot test samples with predicted and ground truth labels overlaid.
 
@@ -1548,7 +1548,7 @@ class TrainingVisualizer:
             metadata: Optional list of metadata dicts per sample.
             num_samples: Maximum number of samples to show.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure.
@@ -1671,11 +1671,11 @@ class TrainingVisualizer:
             showlegend=False,
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Log to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            self._log_classification_images_to_wandb(
+        # Log to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            self._log_classification_images_to_trackio(
                 images[:n_samples],
                 {k: v[:n_samples] for k, v in predictions.items()},
                 {k: v[:n_samples] for k, v in targets.items()},
@@ -1693,7 +1693,7 @@ class TrainingVisualizer:
         target_label: str = "pfirrmann",
         num_samples_per_category: int = 4,
         filename: str | None = None,
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot TP, TN, FP, FN examples for binary or multiclass classification.
 
@@ -1715,7 +1715,7 @@ class TrainingVisualizer:
             target_label: Which label to analyze (e.g., "pfirrmann", "herniation").
             num_samples_per_category: Max samples to show per category.
             filename: Output filename. Defaults to "confusion_examples_{target_label}".
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure with stratified confusion examples.
@@ -1877,11 +1877,11 @@ class TrainingVisualizer:
         )
 
         output_filename = filename or f"confusion_examples_{target_label}"
-        self._save_figure(fig, output_filename, log_to_wandb)
+        self._save_figure(fig, output_filename, log_to_trackio)
 
-        # Log summary stats to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
-            # Compute binary-style stats for wandb logging
+        # Log summary stats to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            # Compute binary-style stats for trackio logging
             if is_binary:
                 tp_mask = (pred_classes == 1) & (gt_classes == 1)
                 tn_mask = (pred_classes == 0) & (gt_classes == 0)
@@ -1907,7 +1907,7 @@ class TrainingVisualizer:
                 stats[f"confusion/{target_label}_recall"] = float(
                     tp_mask.sum() / (tp_mask.sum() + fn_mask.sum())
                 )
-            self._wandb.log(stats)
+            self._trackio.log(stats)
 
         return fig
 
@@ -1920,7 +1920,7 @@ class TrainingVisualizer:
         target_labels: list[str] | None = None,
         num_samples_per_category: int = 4,
         filename_prefix: str = "confusion_examples",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> dict[str, go.Figure]:
         """Plot confusion examples for multiple labels.
 
@@ -1934,7 +1934,7 @@ class TrainingVisualizer:
             target_labels: Labels to visualize. If None, uses all in predictions.
             num_samples_per_category: Max samples per TP/TN/FP/FN category.
             filename_prefix: Prefix for output filenames.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Dictionary mapping label names to their Plotly figures.
@@ -1955,7 +1955,7 @@ class TrainingVisualizer:
                 target_label=label,
                 num_samples_per_category=num_samples_per_category,
                 filename=f"{filename_prefix}_{label}",
-                log_to_wandb=log_to_wandb,
+                log_to_trackio=log_to_trackio,
             )
             figures[label] = fig
 
@@ -1967,7 +1967,7 @@ class TrainingVisualizer:
         targets: dict[str, np.ndarray],
         target_labels: list[str] | None = None,
         filename: str = "confusion_summary",
-        log_to_wandb: bool | None = None,
+        log_to_trackio: bool | None = None,
     ) -> go.Figure:
         """Plot summary of TP/TN/FP/FN counts across all labels.
 
@@ -1979,7 +1979,7 @@ class TrainingVisualizer:
             targets: Dict mapping label names to ground truth values.
             target_labels: Labels to include. If None, uses all in predictions.
             filename: Output filename.
-            log_to_wandb: Override default wandb logging setting.
+            log_to_trackio: Override default trackio logging setting.
 
         Returns:
             Plotly Figure with stacked/grouped bars.
@@ -2078,14 +2078,14 @@ class TrainingVisualizer:
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         )
 
-        self._save_figure(fig, filename, log_to_wandb)
+        self._save_figure(fig, filename, log_to_trackio)
 
-        # Log to wandb
-        if self._should_log_to_wandb(log_to_wandb) and self._wandb is not None:
+        # Log to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
             for i, label in enumerate(labels):
                 if label not in predictions:
                     continue
-                self._wandb.log({
+                self._trackio.log({
                     f"confusion_summary/{label}_tp": tp_counts[i],
                     f"confusion_summary/{label}_tn": tn_counts[i],
                     f"confusion_summary/{label}_fp": fp_counts[i],

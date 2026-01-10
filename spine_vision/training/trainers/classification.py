@@ -1,7 +1,7 @@
 """Classification trainer for multi-task lumbar spine grading.
 
 Specialized trainer for multi-task classification with dual-modality input.
-Uses HuggingFace Accelerate and supports wandb logging.
+Uses HuggingFace Accelerate and supports trackio logging.
 
 Supports training on all labels (multi-task) or individual labels (single-task)
 via the `target_labels` configuration option.
@@ -205,11 +205,7 @@ class ClassificationConfig(TrainingConfig):
     """Maximum samples to display per confusion matrix cell."""
 
 
-@register_trainer(
-    "classification",
-    config_cls=ClassificationConfig,
-    description="Multi-task classification for lumbar spine grading",
-)
+@register_trainer("classification", config_cls=ClassificationConfig)
 class ClassificationTrainer(
     BaseTrainer[ClassificationConfig, MultiTaskClassifier, ClassificationDataset]
 ):
@@ -292,7 +288,7 @@ class ClassificationTrainer(
         self.visualizer = TrainingVisualizer(
             output_path=config.logs_path,
             output_mode="html",
-            use_wandb=config.use_wandb,
+            use_trackio=config.use_trackio,
         )
 
         # Track backbone freeze state
@@ -553,10 +549,10 @@ class ClassificationTrainer(
         for key, value in sorted(metrics.items()):
             logger.info(f"  {key}: {value:.4f}")
 
-        # Log to wandb
-        if self._wandb_initialized:
-            wandb_metrics = {f"test/{key}": value for key, value in metrics.items()}
-            self._log_to_wandb(wandb_metrics)
+        # Log to trackio
+        if self._trackio_initialized:
+            trackio_metrics = {f"test/{key}": value for key, value in metrics.items()}
+            self._log_to_trackio(trackio_metrics)
 
         # Generate visualizations if requested
         if visualize and self.accelerator.is_main_process and all_metadata:

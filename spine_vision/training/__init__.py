@@ -6,7 +6,7 @@ This module provides extensible training infrastructure for various tasks:
 - Segmentation
 
 Uses HuggingFace Accelerate for distributed training and mixed precision,
-with optional wandb logging for experiment tracking.
+with optional trackio logging for experiment tracking.
 
 Key Features:
 - Model/Trainer registries for dynamic discovery

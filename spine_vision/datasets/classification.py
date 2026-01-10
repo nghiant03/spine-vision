@@ -12,25 +12,42 @@ Dataset structure:
 """
 
 import csv
+import re
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Literal
 
 import numpy as np
 import SimpleITK as sitk
 import torch
-import tyro
 from loguru import logger
 from PIL import Image
 from pydantic import BaseModel, computed_field
 from tqdm.rich import tqdm
 from tqdm.std import TqdmExperimentalWarning
 
-from spine_vision.core.logging import setup_logger
-from spine_vision.io import normalize_to_uint8,  read_medical_image
+from spine_vision.core import BaseConfig, add_file_log, setup_logger
+from spine_vision.datasets.base import BaseProcessor, ProcessingResult
+from spine_vision.io import normalize_to_uint8, read_medical_image
+
+# Constants
+ISOTROPIC_SPACING = (0.3, 0.3, 0.3)  # mm - Standard isotropic spacing for resampling
+IMAGENET_MEAN = [0.485, 0.456, 0.406]  # ImageNet normalization mean (RGB)
+IMAGENET_STD = [0.229, 0.224, 0.225]  # ImageNet normalization std (RGB)
+
+# Default IVD center positions in normalized coordinates (0-1) for fallback
+# Approximate positions for L1/L2 through L5/S1 in typical sagittal view
+DEFAULT_IVD_CENTERS = {
+    0: (0.5, 0.25),  # L1/L2
+    1: (0.5, 0.35),  # L2/L3
+    2: (0.5, 0.45),  # L3/L4
+    3: (0.5, 0.55),  # L4/L5
+    4: (0.5, 0.65),  # L5/S1
+}
 
 
-class ClassificationDatasetConfig(BaseModel):
+class ClassificationDatasetConfig(BaseConfig):
     """Configuration for classification dataset creation."""
 
     base_path: Path = Path.cwd() / "data"
@@ -51,11 +68,8 @@ class ClassificationDatasetConfig(BaseModel):
     crop_size: tuple[int, int] = (128, 128)
     """Output size of cropped IVD regions in pixels (H, W)."""
 
-    crop_delta: tuple[int, int, int, int] = (96, 32, 64, 64)
-    """Crop region deltas (left, right, top, bottom) in pixels. Used when crop_delta_mm is None."""
-
-    crop_delta_mm: tuple[float, float, float, float] | None = None
-    """Crop region deltas (left, right, top, bottom) in millimeters. Takes precedence over crop_delta."""
+    crop_delta_mm: tuple[float, float, float, float] = (35.0, 5.0, 20.0, 20.0)
+    """Crop region deltas (left, right, top, bottom) in millimeters."""
 
     image_size: tuple[int, int] = (224, 224)
     """Input image size for localization model (H, W)."""
@@ -71,9 +85,6 @@ class ClassificationDatasetConfig(BaseModel):
 
     device: str = "cuda:0"
     """Device for model inference."""
-
-    verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
-    """Enable verbose logging."""
 
     @computed_field
     @property
@@ -91,7 +102,9 @@ class ClassificationDatasetConfig(BaseModel):
     @property
     def output_path(self) -> Path:
         """Output dataset path."""
-        return self.base_path / "processed" / self.output_name
+        path = self.base_path / "processed" / self.output_name
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
 
 class ClassificationRecord(BaseModel):
@@ -115,7 +128,10 @@ class ClassificationRecord(BaseModel):
 # IVD level mapping (index 0-4 corresponds to L1/L2 to L5/S1)
 IVD_LEVEL_NAMES = ["L1/L2", "L2/L3", "L3/L4", "L4/L5", "L5/S1"]
 
-def resample_to_isotropic(image: sitk.Image, new_spacing: tuple[float, float, float]=(1.0, 1.0, 1.0)) -> sitk.Image:
+def resample_to_isotropic(
+    image: sitk.Image,
+    new_spacing: tuple[float, float, float] = ISOTROPIC_SPACING,
+) -> sitk.Image:
     """
     Resamples a SimpleITK image to a uniform spacing (square pixels).
     """
@@ -146,17 +162,39 @@ def extract_middle_slice(image: sitk.Image) -> np.ndarray:
         image: SimpleITK 3D image.
 
     Returns:
-        Tuple of (2D numpy array of the middle slice, (row_spacing, col_spacing) in mm).
+        2D numpy array of the middle sagittal slice.
     """
     image = sitk.DICOMOrient(image, 'LPI')
     arr = sitk.GetArrayFromImage(image)
 
     if arr.ndim == 2:
-        # 2D image: spacing is (x, y)
         return arr
 
     mid_idx = arr.shape[2] // 2
     return arr[:, :, mid_idx]
+
+
+def get_slice_spacing(image: sitk.Image) -> tuple[float, float]:
+    """Get 2D spacing for middle sagittal slice.
+
+    Args:
+        image: SimpleITK 3D image (should be oriented to LPI).
+
+    Returns:
+        2D spacing (row_spacing, col_spacing) in mm for the sagittal slice.
+        After LPI orientation, sagittal slice is (I, P) plane, so returns (spacing_I, spacing_P).
+    """
+    oriented = sitk.DICOMOrient(image, 'LPI')
+    spacing = oriented.GetSpacing()  # (L, P, I) after LPI orientation
+
+    arr = sitk.GetArrayFromImage(oriented)
+    if arr.ndim == 2:
+        # 2D image: spacing is (x, y), array is (y, x)
+        return (spacing[1], spacing[0])
+
+    # 3D: array is (I, P, L), sagittal slice is (I, P)
+    # Return (spacing_I, spacing_P) = (spacing[2], spacing[1])
+    return (spacing[2], spacing[1])
 
 
 def mm_to_pixels(
@@ -277,10 +315,7 @@ def predict_ivd_locations(
     transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
-        ),
+        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
     ])
 
     pil_img = Image.fromarray(normalize_to_uint8(image)).convert("RGB")
@@ -290,7 +325,7 @@ def predict_ivd_locations(
     with torch.no_grad():
         for level_idx in range(5):
             level_tensor = torch.tensor([level_idx], device=device)
-            pred = model(tensor, level_tensor)
+            pred = model(tensor, level_idx=level_tensor)
             pred_np = pred.cpu().numpy()[0]
             predictions[level_idx] = (float(pred_np[0]), float(pred_np[1]))
 
@@ -300,18 +335,93 @@ def predict_ivd_locations(
 def get_center_fallback_locations() -> dict[int, tuple[float, float]]:
     """Get approximate center locations for IVD levels as fallback.
 
-    These are rough estimates for L1/L2 to L5/S1 in a typical sagittal view.
-
     Returns:
         Dictionary mapping level index to (x, y) coordinates.
     """
-    return {
-        0: (0.5, 0.25),
-        1: (0.5, 0.35),
-        2: (0.5, 0.45),
-        3: (0.5, 0.55),
-        4: (0.5, 0.65),
-    }
+    return DEFAULT_IVD_CENTERS.copy()
+
+
+def _load_phenikaa_labels(labels_path: Path) -> dict[str, dict[int, dict]]:
+    """Load Phenikaa labels from CSV into structured dict.
+
+    Args:
+        labels_path: Path to radiological_labels.csv
+
+    Returns:
+        Dict mapping patient_id -> ivd_level -> label_row
+    """
+    patient_labels: dict[str, dict[int, dict]] = {}
+    with open(labels_path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            patient_id = row["Patient ID"]
+            ivd_level = int(row["IVD label"])
+            if patient_id not in patient_labels:
+                patient_labels[patient_id] = {}
+            patient_labels[patient_id][ivd_level] = row
+    return patient_labels
+
+
+def _find_series_directory(patient_dir: Path, series_pattern: str) -> Path | None:
+    """Find series directory with case-insensitive matching.
+
+    Args:
+        patient_dir: Patient's image directory
+        series_pattern: Pattern to match (e.g., "sag t1")
+
+    Returns:
+        Path to series directory if found, None otherwise
+    """
+    normalized_pattern = series_pattern.lower().replace(" ", "")
+    for subdir in patient_dir.iterdir():
+        if subdir.is_dir():
+            normalized_name = subdir.name.lower().replace(" ", "")
+            if normalized_name == normalized_pattern:
+                return subdir
+    return None
+
+
+def _create_classification_record(
+    output_filename: str,
+    patient_id: str,
+    ivd_level: int,
+    series_type: str,
+    label_row: dict,
+) -> ClassificationRecord:
+    """Create a classification record from label row.
+
+    Args:
+        output_filename: Output image filename
+        patient_id: Patient identifier
+        ivd_level: IVD level (1-5)
+        series_type: Series type (sag_t1 or sag_t2)
+        label_row: CSV row with labels
+
+    Returns:
+        ClassificationRecord instance
+    """
+    # Extract Modic value (only one can be 1)
+    modic_value = 0
+    for i in range(4):
+        if label_row.get(f"Modic_{i}", "0") == "1":
+            modic_value = i
+            break
+
+    return ClassificationRecord(
+        image_path=f"images/{output_filename}",
+        patient_id=patient_id,
+        ivd_level=ivd_level,
+        series_type=series_type,
+        source="phenikaa",
+        pfirrmann_grade=int(label_row.get("Pfirrman grade", 0)),
+        disc_herniation=int(label_row.get("Disc herniation", 0)),
+        disc_narrowing=int(label_row.get("Disc narrowing", 0)),
+        disc_bulging=int(label_row.get("Disc bulging", 0)),
+        spondylolisthesis=int(label_row.get("Spondylolisthesis", 0)),
+        modic=modic_value,
+        up_endplate=int(label_row.get("UP endplate", 0)),
+        low_endplate=int(label_row.get("LOW endplate", 0)),
+    )
 
 
 def process_phenikaa(
@@ -342,15 +452,7 @@ def process_phenikaa(
         logger.warning(f"Phenikaa labels not found: {labels_path}")
         return records
 
-    patient_labels: dict[str, dict[int, dict]] = {}
-    with open(labels_path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            patient_id = row["Patient ID"]
-            ivd_level = int(row["IVD label"])
-            if patient_id not in patient_labels:
-                patient_labels[patient_id] = {}
-            patient_labels[patient_id][ivd_level] = row
+    patient_labels = _load_phenikaa_labels(labels_path)
 
     for patient_id, levels in tqdm(
         patient_labels.items(), desc="Processing Phenikaa", unit="patient"
@@ -363,19 +465,28 @@ def process_phenikaa(
                 continue
 
             for series_pattern, series_type in [("sag t1", "sag_t1"), ("sag t2", "sag_t2")]:
-                # Case-insensitive folder matching (handles "SAG T1", "Sag T1", "SagT1", etc.)
-                series_dir = None
-                for subdir in patient_dir.iterdir():
-                    if subdir.is_dir() and subdir.name.lower().replace(" ", "") == series_pattern.replace(" ", ""):
-                        series_dir = subdir
-                        break
+                series_dir = _find_series_directory(patient_dir, series_pattern)
                 if series_dir is None:
+                    continue
+
+                # Check if all IVD levels for this series already exist before expensive ops
+                levels_to_process: dict[int, dict] = {}
+                for ivd_level, label_row in levels.items():
+                    if ivd_level < 1 or ivd_level > 5:
+                        continue
+                    output_filename = f"phenikaa_{patient_id}_{series_type}_L{ivd_level}.png"
+                    if f"images/{output_filename}" not in existing_image_paths:
+                        levels_to_process[ivd_level] = label_row
+
+                if not levels_to_process:
+                    logger.debug(f"Skipping {patient_id}/{series_type}: all levels exist")
                     continue
 
                 try:
                     image = read_medical_image(series_dir)
-                    image = resample_to_isotropic(image, new_spacing=(0.5, 0.5, 0.5))
+                    image = resample_to_isotropic(image)
                     middle_slice = extract_middle_slice(image)
+                    spacing_2d = get_slice_spacing(image)
                 except Exception as e:
                     logger.debug(f"Error reading {series_dir}: {e}")
                     continue
@@ -387,27 +498,15 @@ def process_phenikaa(
                 else:
                     ivd_locations = get_center_fallback_locations()
 
-                # Compute crop delta in pixels (from mm or direct pixel values)
-                spacing = image.GetSpacing()
-                if config.crop_delta_mm is not None:
-                    crop_delta_px = mm_to_pixels(config.crop_delta_mm, spacing)
-                else:
-                    crop_delta_px = config.crop_delta
+                # Compute crop delta in pixels from mm values
+                crop_delta_px = mm_to_pixels(config.crop_delta_mm, spacing_2d)
 
-                for ivd_level, label_row in levels.items():
-                    if ivd_level < 1 or ivd_level > 5:
-                        continue
-
+                for ivd_level, label_row in levels_to_process.items():
                     level_idx = ivd_level - 1
                     if level_idx not in ivd_locations:
                         continue
 
-                    # Skip if already exists
                     output_filename = f"phenikaa_{patient_id}_{series_type}_L{ivd_level}.png"
-                    if f"images/{output_filename}" in existing_image_paths:
-                        logger.debug(f"Skipping existing: {output_filename}")
-                        continue
-
                     center_x, center_y = ivd_locations[level_idx]
 
                     crop = crop_region(
@@ -415,32 +514,12 @@ def process_phenikaa(
                     )
 
                     output_path = output_images_path / output_filename
-
                     Image.fromarray(crop).save(output_path)
 
-                    modic_value = 0
-                    for i in range(4):
-                        if label_row.get(f"Modic_{i}", "0") == "1":
-                            modic_value = i
-                            break
-
-                    records.append(
-                        ClassificationRecord(
-                            image_path=f"images/{output_filename}",
-                            patient_id=patient_id,
-                            ivd_level=ivd_level,
-                            series_type=series_type,
-                            source="phenikaa",
-                            pfirrmann_grade=int(label_row.get("Pfirrman grade", 0)),
-                            disc_herniation=int(label_row.get("Disc herniation", 0)),
-                            disc_narrowing=int(label_row.get("Disc narrowing", 0)),
-                            disc_bulging=int(label_row.get("Disc bulging", 0)),
-                            spondylolisthesis=int(label_row.get("Spondylolisthesis", 0)),
-                            modic=modic_value,
-                            up_endplate=int(label_row.get("UP endplate", 0)),
-                            low_endplate=int(label_row.get("LOW endplate", 0)),
-                        )
+                    record = _create_classification_record(
+                        output_filename, patient_id, ivd_level, series_type, label_row
                     )
+                    records.append(record)
         except Exception as e:
             logger.debug(f"Failed processing for patient {patient_id}. Error: {e}")
             continue
@@ -486,7 +565,7 @@ def process_spider(
                 patient_labels[patient_id] = {}
             patient_labels[patient_id][ivd_level] = row
 
-    # Cache: key -> (middle_slice, ivd_locations, spacing)
+    # Cache: key -> (middle_slice, ivd_locations, spacing_2d)
     processed_images: dict[tuple[int, str], tuple[np.ndarray, dict[int, tuple[float, float]], tuple[float, float]]] = {}
 
     for patient_id, levels in tqdm(
@@ -497,11 +576,24 @@ def process_spider(
             if not image_file.exists():
                 continue
 
+            # Check if all IVD levels for this series already exist before expensive ops
+            levels_to_process: dict[int, dict] = {}
+            for ivd_level, label_row in levels.items():
+                if ivd_level < 1 or ivd_level > 5:
+                    continue
+                output_filename = f"spider_{patient_id}_{series_type}_L{ivd_level}.png"
+                if f"images/{output_filename}" not in existing_image_paths:
+                    levels_to_process[ivd_level] = label_row
+
+            if not levels_to_process:
+                logger.debug(f"Skipping {patient_id}/{series_type}: all levels exist")
+                continue
+
             cache_key = (patient_id, series_type)
             if cache_key not in processed_images:
                 try:
                     image = read_medical_image(image_file)
-                    image = resample_to_isotropic(image, new_spacing=(0.5, 0.5, 0.5))
+                    image = resample_to_isotropic(image)
                     middle_slice = extract_middle_slice(image)
 
                     if model is not None:
@@ -511,34 +603,23 @@ def process_spider(
                     else:
                         ivd_locations = get_center_fallback_locations()
 
-                    spacing = image.GetSpacing()
-                    processed_images[cache_key] = (middle_slice, ivd_locations, spacing)
+                    spacing_2d = get_slice_spacing(image)
+                    processed_images[cache_key] = (middle_slice, ivd_locations, spacing_2d)
                 except Exception as e:
                     logger.debug(f"Error processing {image_file}: {e}")
                     continue
             else:
-                middle_slice, ivd_locations, spacing = processed_images[cache_key]
+                middle_slice, ivd_locations, spacing_2d = processed_images[cache_key]
 
-            # Compute crop delta in pixels (from mm or direct pixel values)
-            if config.crop_delta_mm is not None:
-                crop_delta_px = mm_to_pixels(config.crop_delta_mm, spacing)
-            else:
-                crop_delta_px = config.crop_delta
+            # Compute crop delta in pixels from mm values
+            crop_delta_px = mm_to_pixels(config.crop_delta_mm, spacing_2d)
 
-            for ivd_level, label_row in levels.items():
-                if ivd_level < 1 or ivd_level > 5:
-                    continue
-
+            for ivd_level, label_row in levels_to_process.items():
                 level_idx = ivd_level - 1
                 if level_idx not in ivd_locations:
                     continue
 
-                # Skip if already exists
                 output_filename = f"spider_{patient_id}_{series_type}_L{ivd_level}.png"
-                if f"images/{output_filename}" in existing_image_paths:
-                    logger.debug(f"Skipping existing: {output_filename}")
-                    continue
-
                 center_x, center_y = ivd_locations[level_idx]
 
                 crop = crop_region(
@@ -647,68 +728,331 @@ def load_existing_annotations(csv_path: Path) -> list[ClassificationRecord]:
     return records
 
 
+@dataclass
+class ParsedImageInfo:
+    """Parsed information from image filename."""
+
+    source: str
+    patient_id: str
+    series_type: str
+    ivd_level: int
+    filename: str
+
+
+def parse_image_filename(filename: str) -> ParsedImageInfo | None:
+    """Parse image filename to extract metadata.
+
+    Expected formats:
+        - phenikaa_{patient_id}_{series_type}_L{level}.png
+        - spider_{patient_id}_{series_type}_L{level}.png
+
+    Args:
+        filename: Image filename (without path).
+
+    Returns:
+        ParsedImageInfo if parsing successful, None otherwise.
+    """
+    # Pattern: {source}_{patient_id}_{series_type}_L{level}.png
+    pattern = r"^(phenikaa|spider)_(.+)_(sag_t[12])_L(\d)\.png$"
+    match = re.match(pattern, filename)
+
+    if not match:
+        return None
+
+    return ParsedImageInfo(
+        source=match.group(1),
+        patient_id=match.group(2),
+        series_type=match.group(3),
+        ivd_level=int(match.group(4)),
+        filename=filename,
+    )
+
+
+def scan_existing_images(images_path: Path) -> list[ParsedImageInfo]:
+    """Scan images directory for existing processed images.
+
+    Args:
+        images_path: Path to images directory.
+
+    Returns:
+        List of parsed image info for all valid images found.
+    """
+    if not images_path.exists():
+        return []
+
+    existing: list[ParsedImageInfo] = []
+    for img_file in images_path.glob("*.png"):
+        parsed = parse_image_filename(img_file.name)
+        if parsed is not None:
+            existing.append(parsed)
+
+    return existing
+
+
+def recover_phenikaa_annotations(
+    existing_images: list[ParsedImageInfo],
+    labels_path: Path,
+) -> list[ClassificationRecord]:
+    """Recover annotations for existing Phenikaa images from source labels.
+
+    Args:
+        existing_images: List of existing Phenikaa image info.
+        labels_path: Path to radiological_labels.csv.
+
+    Returns:
+        List of recovered classification records.
+    """
+    records: list[ClassificationRecord] = []
+
+    if not labels_path.exists():
+        logger.warning(f"Cannot recover Phenikaa annotations: {labels_path} not found")
+        return records
+
+    patient_labels = _load_phenikaa_labels(labels_path)
+
+    for img_info in existing_images:
+        if img_info.source != "phenikaa":
+            continue
+
+        patient_id = img_info.patient_id
+        ivd_level = img_info.ivd_level
+
+        if patient_id not in patient_labels:
+            logger.debug(f"No labels found for patient {patient_id}")
+            continue
+
+        if ivd_level not in patient_labels[patient_id]:
+            logger.debug(f"No labels found for {patient_id} level {ivd_level}")
+            continue
+
+        label_row = patient_labels[patient_id][ivd_level]
+        record = _create_classification_record(
+            img_info.filename,
+            patient_id,
+            ivd_level,
+            img_info.series_type,
+            label_row,
+        )
+        records.append(record)
+
+    return records
+
+
+def recover_spider_annotations(
+    existing_images: list[ParsedImageInfo],
+    labels_path: Path,
+) -> list[ClassificationRecord]:
+    """Recover annotations for existing SPIDER images from source labels.
+
+    Args:
+        existing_images: List of existing SPIDER image info.
+        labels_path: Path to radiological_gradings.csv.
+
+    Returns:
+        List of recovered classification records.
+    """
+    records: list[ClassificationRecord] = []
+
+    if not labels_path.exists():
+        logger.warning(f"Cannot recover SPIDER annotations: {labels_path} not found")
+        return records
+
+    # Load SPIDER labels
+    patient_labels: dict[int, dict[int, dict]] = {}
+    with open(labels_path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            patient_id = int(row["Patient"])
+            ivd_level = int(row["IVD label"])
+            if patient_id not in patient_labels:
+                patient_labels[patient_id] = {}
+            patient_labels[patient_id][ivd_level] = row
+
+    for img_info in existing_images:
+        if img_info.source != "spider":
+            continue
+
+        try:
+            patient_id = int(img_info.patient_id)
+        except ValueError:
+            logger.debug(f"Invalid SPIDER patient ID: {img_info.patient_id}")
+            continue
+
+        ivd_level = img_info.ivd_level
+
+        if patient_id not in patient_labels:
+            logger.debug(f"No labels found for SPIDER patient {patient_id}")
+            continue
+
+        if ivd_level not in patient_labels[patient_id]:
+            logger.debug(f"No labels for SPIDER {patient_id} level {ivd_level}")
+            continue
+
+        label_row = patient_labels[patient_id][ivd_level]
+        records.append(
+            ClassificationRecord(
+                image_path=f"images/{img_info.filename}",
+                patient_id=str(patient_id),
+                ivd_level=ivd_level,
+                series_type=img_info.series_type,
+                source="spider",
+                pfirrmann_grade=int(label_row.get("Pfirrman grade", 0)),
+                disc_herniation=int(label_row.get("Disc herniation", 0)),
+                disc_narrowing=int(label_row.get("Disc narrowing", 0)),
+                disc_bulging=int(label_row.get("Disc bulging", 0)),
+                spondylolisthesis=int(label_row.get("Spondylolisthesis", 0)),
+                modic=int(label_row.get("Modic", 0)),
+                up_endplate=int(label_row.get("UP endplate", 0)),
+                low_endplate=int(label_row.get("LOW endplate", 0)),
+            )
+        )
+
+    return records
+
+
+class ClassificationDatasetProcessor(BaseProcessor[ClassificationDatasetConfig]):
+    """Processor for creating classification dataset from Phenikaa and SPIDER.
+
+    Combines data from multiple sources with IVD-level cropping based on
+    localization model predictions.
+    """
+
+    def __init__(self, config: ClassificationDatasetConfig) -> None:
+        """Initialize processor with configuration.
+
+        Args:
+            config: Classification dataset configuration.
+        """
+        super().__init__(config)
+        # Initialize logging
+        setup_logger(verbose=config.verbose)
+        if config.enable_file_log:
+            add_file_log(config.log_path)
+
+    def process(self) -> ProcessingResult:
+        """Execute classification dataset creation pipeline.
+
+        Uses filesystem-based detection for continuous integration:
+        - Scans existing images from disk (not from CSV)
+        - Recovers annotations for existing images from source labels
+        - Only processes new images that don't exist on disk
+        - Combines recovered + new annotations
+
+        Returns:
+            ProcessingResult with dataset statistics.
+        """
+        warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
+        self.on_process_begin()
+
+        csv_path = self.config.output_path / "annotations.csv"
+        output_images_path = self.config.output_path / "images"
+        output_images_path.mkdir(parents=True, exist_ok=True)
+
+        # Scan filesystem for existing images (more reliable than CSV)
+        existing_images = scan_existing_images(output_images_path)
+        existing_image_paths: set[str] = set()
+        recovered_records: list[ClassificationRecord] = []
+
+        if existing_images and self.config.append_to_existing:
+            logger.info(f"Found {len(existing_images)} existing images on disk")
+            existing_image_paths = {f"images/{img.filename}" for img in existing_images}
+
+            # Recover annotations from source labels for existing images
+            phenikaa_labels_path = self.config.phenikaa_path / "radiological_labels.csv"
+            spider_labels_path = self.config.spider_path / "radiological_gradings.csv"
+
+            phenikaa_recovered = recover_phenikaa_annotations(
+                existing_images, phenikaa_labels_path
+            )
+            spider_recovered = recover_spider_annotations(
+                existing_images, spider_labels_path
+            )
+
+            recovered_records = phenikaa_recovered + spider_recovered
+            logger.info(
+                f"Recovered annotations for {len(recovered_records)} existing images "
+                f"({len(phenikaa_recovered)} Phenikaa, {len(spider_recovered)} SPIDER)"
+            )
+
+            # Warn about orphan images (images without matching labels)
+            orphan_count = len(existing_images) - len(recovered_records)
+            if orphan_count > 0:
+                logger.warning(
+                    f"{orphan_count} existing images have no matching labels "
+                    "(labels may have been removed from source)"
+                )
+
+        model: torch.nn.Module | None = None
+        if self.config.localization_model_path is not None:
+            logger.info(
+                f"Loading localization model from: {self.config.localization_model_path}"
+            )
+            model = load_localization_model(
+                self.config.localization_model_path,
+                self.config.model_variant,
+                self.config.device,
+            )
+        else:
+            logger.warning(
+                "No localization model provided, using center fallback locations"
+            )
+
+        new_records: list[ClassificationRecord] = []
+
+        if self.config.include_phenikaa:
+            logger.info("Processing Phenikaa dataset...")
+            phenikaa_records = process_phenikaa(
+                self.config, output_images_path, model, existing_image_paths
+            )
+            new_records.extend(phenikaa_records)
+            logger.info(f"Processed {len(phenikaa_records)} new Phenikaa records")
+
+        if self.config.include_spider:
+            logger.info("Processing SPIDER dataset...")
+            spider_records = process_spider(
+                self.config, output_images_path, model, existing_image_paths
+            )
+            new_records.extend(spider_records)
+            logger.info(f"Processed {len(spider_records)} new SPIDER records")
+
+        # Combine recovered and new records
+        all_records = recovered_records + new_records
+
+        fieldnames = list(ClassificationRecord.model_fields.keys())
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for rec in all_records:
+                writer.writerow(rec.model_dump())
+
+        log_dataset_summary(all_records)
+        logger.info(f"Dataset saved to: {self.config.output_path}")
+        logger.info(f"Annotations CSV: {csv_path}")
+        logger.info(f"Images directory: {output_images_path}")
+        if recovered_records:
+            logger.info(
+                f"Total: {len(all_records)} records "
+                f"({len(recovered_records)} recovered, {len(new_records)} new)"
+            )
+
+        result = ProcessingResult(
+            num_samples=len(all_records),
+            output_path=self.config.output_path,
+            summary=f"Created {len(all_records)} classification samples ({len(new_records)} new, {len(recovered_records)} recovered)",
+        )
+
+        self.on_process_end(result)
+        return result
+
+
 def main(config: ClassificationDatasetConfig) -> None:
     """Create classification dataset.
+
+    Convenience wrapper around ClassificationDatasetProcessor for backward compatibility.
 
     Args:
         config: Dataset configuration.
     """
-    warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
-    setup_logger(verbose=config.verbose)
-
-    csv_path = config.output_path / "annotations.csv"
-    output_images_path = config.output_path / "images"
-
-    # Check for existing dataset and load if appending
-    existing_records: list[ClassificationRecord] = []
-    existing_image_paths: set[str] = set()
-
-    if config.append_to_existing and csv_path.exists():
-        logger.info(f"Found existing dataset at: {config.output_path}")
-        existing_records = load_existing_annotations(csv_path)
-        existing_image_paths = {rec.image_path for rec in existing_records}
-        logger.info(f"Loaded {len(existing_records)} existing records")
-
-    output_images_path.mkdir(parents=True, exist_ok=True)
-
-    model: torch.nn.Module | None = None
-    if config.localization_model_path is not None:
-        logger.info(f"Loading localization model from: {config.localization_model_path}")
-        model = load_localization_model(
-            config.localization_model_path,
-            config.model_variant,
-            config.device,
-        )
-    else:
-        logger.warning("No localization model provided, using center fallback locations")
-
-    new_records: list[ClassificationRecord] = []
-
-    if config.include_phenikaa:
-        logger.info("Processing Phenikaa dataset...")
-        phenikaa_records = process_phenikaa(config, output_images_path, model, existing_image_paths)
-        new_records.extend(phenikaa_records)
-        logger.info(f"Processed {len(phenikaa_records)} new Phenikaa records")
-
-    if config.include_spider:
-        logger.info("Processing SPIDER dataset...")
-        spider_records = process_spider(config, output_images_path, model, existing_image_paths)
-        new_records.extend(spider_records)
-        logger.info(f"Processed {len(spider_records)} new SPIDER records")
-
-    # Combine existing and new records
-    all_records = existing_records + new_records
-
-    fieldnames = list(ClassificationRecord.model_fields.keys())
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for rec in all_records:
-            writer.writerow(rec.model_dump())
-
-    log_dataset_summary(all_records)
-    logger.info(f"Dataset saved to: {config.output_path}")
-    logger.info(f"Annotations CSV: {csv_path}")
-    logger.info(f"Images directory: {output_images_path}")
-    if existing_records:
-        logger.info(f"Existing records: {len(existing_records)}, New records: {len(new_records)}")
+    processor = ClassificationDatasetProcessor(config)
+    result = processor.process()
+    logger.info(result.summary)

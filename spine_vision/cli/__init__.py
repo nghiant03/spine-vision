@@ -17,6 +17,7 @@ import dataclasses
 from typing import Annotated, Union
 
 import tyro
+from loguru import logger
 
 from spine_vision.cli.analyze import AnalyzeConfig
 from spine_vision.cli.analyze import main as analyze_main
@@ -25,12 +26,14 @@ from spine_vision.cli.evaluate import main as evaluate_main
 from spine_vision.cli.test import TestConfig
 from spine_vision.cli.test import main as test_main
 from spine_vision.cli.train import main as train_main
-from spine_vision.datasets.classification import ClassificationDatasetConfig
-from spine_vision.datasets.classification import main as classification_main
-from spine_vision.datasets.ivd_coords import IVDDatasetConfig
-from spine_vision.datasets.ivd_coords import main as ivd_coords_main
-from spine_vision.datasets.phenikaa import PreprocessConfig
-from spine_vision.datasets.phenikaa import main as phenikaa_main
+from spine_vision.datasets import (
+    ClassificationDatasetConfig,
+    ClassificationDatasetProcessor,
+    IVDCoordsDatasetProcessor,
+    IVDDatasetConfig,
+    PhenikkaaProcessor,
+    PreprocessConfig,
+)
 from spine_vision.training.trainers.classification import ClassificationConfig
 from spine_vision.training.trainers.localization import LocalizationConfig
 
@@ -134,11 +137,17 @@ def cli() -> None:
         case DatasetCommand(cmd=cmd):
             match cmd:
                 case IVDDatasetConfig():
-                    ivd_coords_main(cmd)
+                    processor = IVDCoordsDatasetProcessor(cmd)
+                    result = processor.process()
+                    logger.info(result.summary)
                 case PreprocessConfig():
-                    phenikaa_main(cmd)
+                    processor = PhenikkaaProcessor(cmd)
+                    result = processor.process()
+                    logger.info(result.summary)
                 case ClassificationDatasetConfig():
-                    classification_main(cmd)
+                    processor = ClassificationDatasetProcessor(cmd)
+                    result = processor.process()
+                    logger.info(result.summary)
         case TrainCommand(cmd=cmd):
             match cmd:
                 case LocalizationConfig():

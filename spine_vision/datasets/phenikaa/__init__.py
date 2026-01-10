@@ -17,11 +17,12 @@ from typing import Annotated
 
 import tyro
 from loguru import logger
-from pydantic import BaseModel, computed_field
+from pydantic import computed_field
 from tqdm.rich import tqdm
 from tqdm.std import TqdmExperimentalWarning
 
-from spine_vision.core import add_file_log, setup_logger
+from spine_vision.core import BaseConfig, add_file_log, setup_logger
+from spine_vision.datasets.base import BaseProcessor, ProcessingResult
 from spine_vision.datasets.phenikaa.matching import PatientMatcher, fuzzy_value_extract
 from spine_vision.datasets.phenikaa.ocr import (
     SUPPORTED_EXTENSIONS,
@@ -343,7 +344,7 @@ def collect_report_files(report_path: Path) -> list[Path]:
     return report_files
 
 
-class PreprocessConfig(BaseModel):
+class PreprocessConfig(BaseConfig):
     """Configuration for preprocessing pipeline."""
 
     data_path: Path = Path.cwd() / "data/raw/Phenikaa"
@@ -357,7 +358,6 @@ class PreprocessConfig(BaseModel):
         250026665,
         250010269,
     ]
-    output_path: Path = Path.cwd() / "data/interim/Phenikaa"
     output_table: str = "radiological_labels.csv"
     model_path: Path = Path.cwd() / "weights/ocr"
     detection_model: str = "PP-OCRv5_server_det"
@@ -367,9 +367,8 @@ class PreprocessConfig(BaseModel):
     pdf_dpi: int = 200
     pdf_id_crop_region: tuple[int, int, int, int] = DEFAULT_PDF_ID_CROP_REGION
     use_gpu: Annotated[bool, tyro.conf.arg(aliases=["-g"])] = True
-    verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
-    enable_file_log: bool = False
-    log_path: Path = Path.cwd() / "logs"
+
+    output_path: Path = Path.cwd() / "data/interim/Phenikaa"
 
     @computed_field
     @property
@@ -402,110 +401,149 @@ class PreprocessConfig(BaseModel):
         return self.output_path / "images"
 
 
+class PhenikkaaProcessor(BaseProcessor[PreprocessConfig]):
+    """Processor for Phenikaa dataset preprocessing.
+
+    Extracts patient information from medical reports via OCR and matches
+    to image folders using fuzzy matching.
+    """
+
+    def __init__(self, config: PreprocessConfig) -> None:
+        """Initialize processor with configuration.
+
+        Args:
+            config: Phenikaa preprocessing configuration.
+        """
+        super().__init__(config)
+        # Initialize logging
+        setup_logger(verbose=config.verbose)
+        if config.enable_file_log:
+            add_file_log(config.log_path)
+
+    def process(self) -> ProcessingResult:
+        """Execute Phenikaa preprocessing pipeline.
+
+        Returns:
+            ProcessingResult with matched patient statistics.
+        """
+        warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
+        self.on_process_begin()
+
+        logger.debug("Started preprocessing.")
+
+        # Load label data
+        label_data = load_tabular_data(
+            table_path=self.config.table_path,
+            exclude_files=self.config.exclude_files,
+            id_col=self.config.id_col,
+            corrupted_ids=self.config.corrupted_ids,
+            one_hot_col=ONE_HOT_COL,
+        )
+
+        if label_data.empty:
+            logger.info(f"No valid data found at {self.config.table_path}")
+            result = ProcessingResult(
+                num_samples=0,
+                output_path=self.config.output_path,
+                summary="No valid data found",
+            )
+            self.on_process_end(result)
+            return result
+
+        label_data = label_data.astype(int)
+
+        logger.debug(f"Unique Patients: {label_data[self.config.id_col].nunique()}")
+
+        # Initialize OCR
+        device = "cuda:0" if self.config.use_gpu else "cpu"
+        logger.info("Loading OCR models.")
+        extractor = DocumentExtractor(
+            detection_model=self.config.detection_model,
+            recognition_model=self.config.recognition_model,
+            device=device,
+            use_gpu=self.config.use_gpu,
+            pdf_dpi=self.config.pdf_dpi,
+        )
+
+        # Collect all report files
+        report_files = collect_report_files(self.config.report_path)
+
+        # Build processor registry
+        processor_registry = build_report_processor_registry(
+            self.config.pdf_id_crop_region
+        )
+
+        # Build patient matcher
+        patient_matcher = PatientMatcher(
+            image_path=self.config.image_path,
+            threshold=self.config.image_fuzzy_threshold,
+        )
+
+        # Track which IDs we need
+        valid_ids = set(label_data[self.config.id_col].unique())
+        matched_ids: list[int] = []
+
+        for report_path in tqdm(report_files, desc="Processing Reports", unit="report"):
+            # Process report to extract info
+            report_info = processor_registry.process(
+                report_path, extractor, self.config.report_fuzzy_threshold
+            )
+            if not report_info:
+                continue
+
+            # Skip if ID is None or not in label data
+            if report_info.patient_id is None:
+                continue
+            if report_info.patient_id not in valid_ids:
+                logger.debug(f"ID {report_info.patient_id} not in label data, skipping")
+                continue
+
+            # Match to image folder
+            if report_info.patient_name and report_info.patient_birthday:
+                best_folder = patient_matcher.match(
+                    report_info.patient_name, report_info.patient_birthday
+                )
+            elif report_info.patient_name:
+                # Try matching by name only (patient-named reports may lack birthday)
+                best_folder = patient_matcher.match_by_name(report_info.patient_name)
+            else:
+                best_folder = None
+
+            if best_folder:
+                dest = self.config.output_image_path / str(report_info.patient_id)
+                shutil.copytree(best_folder, dest, dirs_exist_ok=True)
+                logger.info(f"Copied {best_folder.name} -> {dest}")
+                matched_ids.append(report_info.patient_id)
+            else:
+                logger.warning(
+                    f"No matching folder for '{report_info.patient_name}' "
+                    f"(ID: {report_info.patient_id})"
+                )
+
+        # Filter and save labels
+        label_data = label_data[label_data[self.config.id_col].isin(matched_ids)]
+        label_data.to_csv(self.config.output_table_path, index=False)
+        logger.info(f"Saved table to {self.config.output_table_path}")
+        logger.info(f"Matched {len(matched_ids)} patients out of {len(valid_ids)}")
+
+        result = ProcessingResult(
+            num_samples=len(matched_ids),
+            output_path=self.config.output_path,
+            summary=f"Matched {len(matched_ids)} of {len(valid_ids)} patients",
+        )
+
+        self.on_process_end(result)
+        return result
+
+
 def main(config: PreprocessConfig) -> None:
     """Run preprocessing pipeline.
 
-    Processes medical reports to match patient IDs to image folders:
-    1. Loads radiological grading labels from Excel/CSV
-    2. Scans for report files (images and PDFs)
-    3. For each report, extracts patient info via OCR
-    4. Matches extracted info to image folders
-    5. Copies matched images and saves filtered labels
+    Convenience wrapper around PhenikkaaProcessor for backward compatibility.
+
+    Args:
+        config: Preprocessing configuration.
     """
-    warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
-
-    setup_logger(
-        verbose=config.verbose,
-    )
-
-    if config.enable_file_log:
-        add_file_log()
-
-    logger.debug("Started preprocessing.")
-
-    # Load label data
-    label_data = load_tabular_data(
-        table_path=config.table_path,
-        exclude_files=config.exclude_files,
-        id_col=config.id_col,
-        corrupted_ids=config.corrupted_ids,
-        one_hot_col=ONE_HOT_COL,
-    )
-
-    if label_data.empty:
-        logger.info(f"No valid data found at {config.table_path}")
-        return
-
-    label_data = label_data.astype(int)
-
-    logger.debug(f"Unique Patients: {label_data[config.id_col].nunique()}")
-
-    # Initialize OCR
-    device = "cuda:0" if config.use_gpu else "cpu"
-    logger.info("Loading OCR models.")
-    extractor = DocumentExtractor(
-        detection_model=config.detection_model,
-        recognition_model=config.recognition_model,
-        device=device,
-        use_gpu=config.use_gpu,
-        pdf_dpi=config.pdf_dpi,
-    )
-
-    # Collect all report files
-    report_files = collect_report_files(config.report_path)
-
-    # Build processor registry
-    processor_registry = build_report_processor_registry(config.pdf_id_crop_region)
-
-    # Build patient matcher
-    patient_matcher = PatientMatcher(
-        image_path=config.image_path,
-        threshold=config.image_fuzzy_threshold,
-    )
-
-    # Track which IDs we need
-    valid_ids = set(label_data[config.id_col].unique())
-    matched_ids: list[int] = []
-
-    for report_path in tqdm(report_files, desc="Processing Reports", unit="report"):
-        # Process report to extract info
-        report_info = processor_registry.process(
-            report_path, extractor, config.report_fuzzy_threshold
-        )
-        if not report_info:
-            continue
-
-        # Skip if ID is None or not in label data
-        if report_info.patient_id is None:
-            continue
-        if report_info.patient_id not in valid_ids:
-            logger.debug(f"ID {report_info.patient_id} not in label data, skipping")
-            continue
-
-        # Match to image folder
-        if report_info.patient_name and report_info.patient_birthday:
-            best_folder = patient_matcher.match(
-                report_info.patient_name, report_info.patient_birthday
-            )
-        elif report_info.patient_name:
-            # Try matching by name only (patient-named reports may lack birthday)
-            best_folder = patient_matcher.match_by_name(report_info.patient_name)
-        else:
-            best_folder = None
-
-        if best_folder:
-            dest = config.output_image_path / str(report_info.patient_id)
-            shutil.copytree(best_folder, dest, dirs_exist_ok=True)
-            logger.info(f"Copied {best_folder.name} -> {dest}")
-            matched_ids.append(report_info.patient_id)
-        else:
-            logger.warning(
-                f"No matching folder for '{report_info.patient_name}' "
-                f"(ID: {report_info.patient_id})"
-            )
-
-    # Filter and save labels
-    label_data = label_data[label_data[config.id_col].isin(matched_ids)]
-    label_data.to_csv(config.output_table_path, index=False)
-    logger.info(f"Saved table to {config.output_table_path}")
-    logger.info(f"Matched {len(matched_ids)} patients out of {len(valid_ids)}")
+    processor = PhenikkaaProcessor(config)
+    result = processor.process()
+    logger.info(result.summary)

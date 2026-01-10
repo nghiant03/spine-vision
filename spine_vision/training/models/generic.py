@@ -125,12 +125,7 @@ class MTLTargets:
         }
 
 
-@register_model(
-    "classifier",
-    task="classification",
-    description="Single-task image classifier with configurable backbone",
-    aliases=["image_classifier"],
-)
+@register_model("classifier")
 class ImageClassifier(BaseModel):
     """Generic image classifier with configurable backbone and head.
 
@@ -199,11 +194,12 @@ class ImageClassifier(BaseModel):
     def feature_dim(self) -> int:
         return self._feature_dim
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs: Any) -> torch.Tensor:
         """Forward pass.
 
         Args:
             x: Input images [B, C, H, W].
+            **kwargs: Unused, for signature compatibility.
 
         Returns:
             Logits [B, num_classes].
@@ -255,12 +251,7 @@ class ImageClassifier(BaseModel):
         return result
 
 
-@register_model(
-    "multi_task_classifier",
-    task="mtl_classification",
-    description="Multi-task classifier with configurable backbone and task heads",
-    aliases=["mtl_classifier", "mtl"],
-)
+@register_model("multi_task_classifier")
 class MultiTaskClassifier(BaseModel):
     """Generic multi-task classifier with configurable backbone and heads.
 
@@ -370,11 +361,12 @@ class MultiTaskClassifier(BaseModel):
     def feature_dim(self) -> int:
         return self._feature_dim
 
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor, **kwargs: Any) -> dict[str, torch.Tensor]:
         """Forward pass.
 
         Args:
             x: Input images [B, C, H, W].
+            **kwargs: Unused, for signature compatibility.
 
         Returns:
             Dictionary mapping task names to output logits.
@@ -436,11 +428,11 @@ class MultiTaskClassifier(BaseModel):
     def get_features(self, x: torch.Tensor) -> torch.Tensor:
         return self.backbone(x)
 
-    def predict(self, x: torch.Tensor) -> dict[str, np.ndarray]:
+    def predict(self, x: torch.Tensor, **kwargs: Any) -> dict[str, np.ndarray]:
         """Run inference and return final predictions."""
         self.eval()
         with torch.no_grad():
-            outputs = self.forward(x)
+            outputs = self.forward(x, **kwargs)
 
         predictions: dict[str, np.ndarray] = {}
         for task in self._tasks:
@@ -526,12 +518,7 @@ class MultiTaskClassifier(BaseModel):
         }
 
 
-@register_model(
-    "coordinate_regressor",
-    task="localization",
-    description="Coordinate regressor for localization with configurable backbone",
-    aliases=["localizer", "regressor"],
-)
+@register_model("coordinate_regressor")
 class CoordinateRegressor(BaseModel):
     """Generic coordinate regressor with configurable backbone and head.
 
@@ -631,18 +618,20 @@ class CoordinateRegressor(BaseModel):
     def forward(
         self,
         x: torch.Tensor,
-        level_idx: torch.Tensor | None = None,
+        **kwargs: Any,
     ) -> torch.Tensor:
         """Forward pass.
 
         Args:
             x: Input images [B, C, H, W].
-            level_idx: Optional level indices [B] for level embedding.
+            **kwargs: Optional keyword arguments.
+                level_idx (torch.Tensor | None): Level indices [B] for level embedding.
 
         Returns:
             Predicted coordinates [B, num_outputs] in [0, 1].
         """
         features = self.backbone(x)
+        level_idx = kwargs.get("level_idx")
 
         if self.level_embedding is not None and level_idx is not None:
             level_emb = self.level_embedding(level_idx)
@@ -719,7 +708,7 @@ class CoordinateRegressor(BaseModel):
         self.eval()
         start_time = time.perf_counter()
         with torch.no_grad():
-            predictions = self.forward(batch, level_idx_tensor)
+            predictions = self.forward(batch, level_idx=level_idx_tensor)
         inference_time_ms = (time.perf_counter() - start_time) * 1000
 
         predictions_np = predictions.cpu().numpy()
