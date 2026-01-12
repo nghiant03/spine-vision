@@ -15,7 +15,12 @@ import torch
 from loguru import logger
 from torch.utils.data import DataLoader
 
-from spine_vision.training.base import BaseTrainer, TrainingConfig, TrainingResult
+from spine_vision.training.base import (
+    BaseTrainer,
+    TrainingConfig,
+    TrainingResult,
+    _create_worker_init_fn,
+)
 from spine_vision.training.datasets.classification import (
     AVAILABLE_LABELS,
     ClassificationCollator,
@@ -149,7 +154,7 @@ class ClassificationConfig(TrainingConfig):
     """Classification dataset path."""
 
     # Model configuration
-    backbone: str = "resnet50"
+    backbone: str = "resnet18"
     """Backbone architecture (see BackboneFactory for options)."""
 
     pretrained: bool = True
@@ -218,7 +223,7 @@ class ClassificationTrainer(
     - on_train_begin: Log dataset stats
     - on_epoch_begin: Handle backbone unfreezing
     - on_train_end: Generate final visualizations
-    - get_metric_for_checkpoint: Use overall_accuracy (negated for lower-is-better)
+    - get_metric_for_checkpoint: Use macro_f1 (negated for lower-is-better)
     """
 
     def __init__(
@@ -299,7 +304,11 @@ class ClassificationTrainer(
         dataset: ClassificationDataset,
         shuffle: bool = True,
     ) -> DataLoader[Any]:
-        """Create DataLoader with custom collator."""
+        """Create DataLoader with custom collator and deterministic worker seeding."""
+        # Create generator for reproducible shuffling
+        generator = torch.Generator()
+        generator.manual_seed(self.config.seed)
+
         return DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -308,6 +317,8 @@ class ClassificationTrainer(
             pin_memory=self.config.pin_memory,
             drop_last=shuffle,
             collate_fn=ClassificationCollator(),
+            worker_init_fn=_create_worker_init_fn(self.config.seed),
+            generator=generator,
         )
 
     def _unpack_batch(
@@ -408,6 +419,9 @@ class ClassificationTrainer(
         stats = self.train_dataset.get_stats()
         logger.info(f"Train dataset stats: {stats}")
 
+        # Visualize label distribution across splits
+        self._visualize_label_distribution()
+
     def on_epoch_begin(self, epoch: int) -> None:
         """Handle backbone unfreezing."""
         if (
@@ -429,7 +443,9 @@ class ClassificationTrainer(
         val_loss: float | None,
         metrics: dict[str, float],
     ) -> float:
-        """Use overall accuracy for checkpointing (negated for lower-is-better)."""
+        """Use macro F1 score for checkpointing (negated for lower-is-better)."""
+        if "macro_f1" in metrics:
+            return -metrics["macro_f1"]
         if "overall_accuracy" in metrics:
             return -metrics["overall_accuracy"]
         if val_loss is not None:
@@ -448,6 +464,46 @@ class ClassificationTrainer(
             self._visualize_test_samples()
 
         logger.info(f"Visualizations saved to: {self.config.logs_path}")
+
+    def _visualize_label_distribution(self) -> None:
+        """Visualize label distribution across train/val/test splits."""
+        # Create test dataset to get its distribution
+        test_dataset = ClassificationDataset(
+            data_path=self.config.data_path,
+            split="test",
+            val_ratio=self.config.val_split,
+            levels=self.config.levels,
+            series_types=self.config.series_types,
+            target_labels=self.config.target_labels,
+            output_size=self.config.output_size,
+            augment=False,
+        )
+
+        # Collect distributions from all splits
+        distributions: dict[str, dict[str, dict[int | str, int]]] = {
+            "train": self.train_dataset.get_label_distribution(),
+            "test": test_dataset.get_label_distribution(),
+        }
+
+        # Add validation distribution if val_dataset exists
+        if self.val_dataset is not None:
+            distributions["val"] = self.val_dataset.get_label_distribution()
+            val_size = len(self.val_dataset)
+        else:
+            val_size = 0
+
+        # Log sample counts
+        logger.info(
+            f"Split sizes - Train: {len(self.train_dataset)}, "
+            f"Val: {val_size}, Test: {len(test_dataset)}"
+        )
+
+        # Generate visualization
+        self.visualizer.plot_label_distribution(
+            distributions=distributions,
+            target_labels=self._target_labels,
+            filename="label_distribution",
+        )
 
     def _visualize_test_samples(self) -> None:
         """Visualize a batch of test samples with predicted labels overlaid."""

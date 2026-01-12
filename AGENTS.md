@@ -94,9 +94,6 @@ spine-vision/
 │   │   │   └── matching.py    # PatientMatcher, fuzzy_value_extract
 │   │   └── schemas/           # YAML label definitions
 │   │       └── spider.yaml    # SPIDER dataset labels
-│   ├── visualization/         # Visualization
-│   │   ├── __init__.py
-│   │   └── plotly_viewer.py   # Interactive batch-capable viewer
 │   ├── training/              # Training infrastructure
 │   │   ├── __init__.py
 │   │   ├── base.py            # BaseTrainer, BaseModel, TrainingConfig
@@ -216,15 +213,6 @@ name = fuzzy_value_extract(text_lines, "Ho ten nguoi benh", threshold=80)
 # Match patients to image folders
 matcher = PatientMatcher(image_path=Path("images/"), threshold=85)
 folder = matcher.match(patient_name, patient_birthday)
-```
-
-### Visualization (`spine_vision.visualization`)
-```python
-from spine_vision.visualization import PlotlyViewer
-
-viewer = PlotlyViewer(output_path=Path("results/"), output_mode="html")
-viewer.visualize(image, mask, title="Segmentation")
-viewer.visualize_batch(images, masks)
 ```
 
 ### Training (`spine_vision.training`)

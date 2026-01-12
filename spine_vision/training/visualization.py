@@ -880,9 +880,9 @@ class TrainingVisualizer:
                 path = self.output_path / f"{filename}.html"
                 fig.write_html(path)
 
-        # Log to trackio if enabled
+        # Log to trackio if enabled (convert Figure to JSON for serialization)
         if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
-            self._trackio.log({filename: fig})
+            self._trackio.log({filename: fig.to_json()})
 
     # ==================== Classification Visualization ====================
 
@@ -1167,12 +1167,19 @@ class TrainingVisualizer:
         n_cols = min(3, n_labels)
         n_rows = (n_labels + n_cols - 1) // n_cols
 
+        # Calculate dynamic vertical spacing to avoid plotly error
+        if n_rows > 1:
+            max_v_spacing = 0.9 / (n_rows - 1)
+            v_spacing = min(0.15, max_v_spacing)
+        else:
+            v_spacing = 0.15
+
         fig = make_subplots(
             rows=n_rows,
             cols=n_cols,
             subplot_titles=[LABEL_DISPLAY_NAMES.get(lbl, lbl) for lbl in labels],
             horizontal_spacing=0.1,
-            vertical_spacing=0.15,
+            vertical_spacing=v_spacing,
         )
 
         for idx, label in enumerate(labels):
@@ -1247,23 +1254,24 @@ class TrainingVisualizer:
     ) -> go.Figure:
         """Plot confusion matrix with sample images from each cell.
 
-        Creates a visualization showing the confusion matrix as a heatmap with
-        sample images from each cell (true_class, pred_class) displayed in a grid.
-        Only cells with data are shown.
+        Creates a visualization with the confusion matrix in the first row
+        and sample images from each cell displayed in separate rows below.
+        Each sample shows source information (e.g., SPIDER, Phenikaa).
 
         Args:
             images: List of ORIGINAL images as numpy arrays [H, W, C] or [H, W].
             predictions: Dict mapping label names to predicted values [N] or [N, C].
             targets: Dict mapping label names to ground truth values [N] or [N, C].
             target_label: Which label to analyze (e.g., "pfirrmann", "herniation").
-            metadata: Optional list of metadata dicts per sample.
+            metadata: Optional list of metadata dicts per sample. Should contain
+                'source', 'patient_id', and 'level'/'ivd' keys for source info.
             class_names: Optional list of class names for display.
             max_samples_per_cell: Maximum samples to show per confusion matrix cell.
             filename: Output filename. Defaults to "confusion_matrix_samples_{target_label}".
             log_to_trackio: Override default trackio logging setting.
 
         Returns:
-            Plotly Figure with confusion matrix and sample images.
+            Plotly Figure with confusion matrix in row 1 and sample images in rows below.
         """
         if target_label not in predictions:
             logger.warning(f"Label '{target_label}' not found in predictions")
@@ -1315,11 +1323,13 @@ class TrainingVisualizer:
             logger.warning(f"No samples found for label '{target_label}'")
             return go.Figure()
 
-        # Layout: 2 columns - confusion matrix on left, sample images on right
         display_name = LABEL_DISPLAY_NAMES.get(target_label, target_label)
         n_cell_rows = len(non_empty_cells)
 
-        # Build subplot titles: confusion matrix + sample cells
+        # Layout: Row 1 = confusion matrix, Rows 2+ = sample images (one per cell)
+        n_rows = 1 + n_cell_rows  # 1 for confusion matrix + 1 per cell
+
+        # Build subplot titles
         subplot_titles = [f"{display_name} Confusion Matrix"]
         for gt_idx, pred_idx in sorted(non_empty_cells):
             gt_name = display_names[gt_idx]
@@ -1328,41 +1338,54 @@ class TrainingVisualizer:
             status = "Correct" if gt_idx == pred_idx else "Misclassified"
             subplot_titles.append(f"GT={gt_name} → Pred={pred_name} ({status}, n={n_cell_samples})")
 
-        # Create 2-column layout: col1 = confusion matrix (spans all rows), col2 = sample images
-        # Use row_heights to ensure proper spacing
-        specs: list[list[dict[str, str | bool | int | float] | None]] = []
-        row_heights: list[float] = []
+        # Create specs: row 1 = heatmap, remaining rows = images
+        specs = [[{"type": "heatmap"}]]
+        for _ in range(n_cell_rows):
+            specs.append([{"type": "image"}])  # Sample image rows
 
-        for i in range(n_cell_rows):
-            if i == 0:
-                # First row: confusion matrix (spanning all rows) on left, first sample on right
-                specs.append([{"type": "heatmap", "rowspan": n_cell_rows}, {"type": "image"}])
-            else:
-                # Remaining rows: None for left (spanned), sample image on right
-                specs.append([None, {"type": "image"}])
-            row_heights.append(1.0)
+        # Row heights: larger for confusion matrix, smaller for sample rows
+        # Use larger ratio for confusion matrix to ensure clear separation
+        row_heights = [1.5] + [1.0] * n_cell_rows
 
-        # Handle edge case: if no cells, just show confusion matrix
-        if n_cell_rows == 0:
-            specs = [[{"type": "heatmap"}]]
-            row_heights = [1.0]
-            n_cols = 1
+        # Calculate dynamic vertical spacing - use larger spacing to avoid overlap
+        # The key is to have enough space between the CM colorbar and sample rows
+        if n_rows > 1:
+            max_v_spacing = 0.85 / (n_rows - 1)
+            v_spacing = min(0.18, max_v_spacing)  # Larger spacing for clear separation
         else:
-            n_cols = 2
+            v_spacing = 0.18
 
         fig = make_subplots(
-            rows=max(1, n_cell_rows),
-            cols=n_cols,
+            rows=n_rows,
+            cols=1,
             subplot_titles=subplot_titles,
-            vertical_spacing=0.08,
-            horizontal_spacing=0.08,
-            specs=specs,
+            vertical_spacing=v_spacing,
             row_heights=row_heights,
-            column_widths=[0.4, 0.6] if n_cols == 2 else [1.0],
+            specs=specs,
+            column_widths=[300]
         )
 
-        # Add confusion matrix heatmap (always at row=1, col=1)
+        # Add confusion matrix heatmap (row 1)
         cm_normalized = cm.astype(float) / np.maximum(cm.sum(axis=1, keepdims=True), 1)
+
+        # Calculate colorbar position in paper coordinates (0-1 for entire figure).
+        # The CM subplot is in row 1 at the top. With row_heights and v_spacing,
+        # we need to find where the CM subplot actually starts and ends.
+        #
+        # Paper coords: y=1 is top, y=0 is bottom.
+        # The subplot domain is affected by vertical_spacing.
+        # Approximate the CM domain: starts at top, spans (row_heights[0]/total) * (1 - total_spacing)
+        total_row_weight = sum(row_heights)
+        cm_weight_fraction = row_heights[0] / total_row_weight
+        total_spacing_fraction = v_spacing * (n_rows - 1)
+        available_height = 1.0 - total_spacing_fraction
+        cm_domain_height = available_height * cm_weight_fraction
+
+        # Colorbar should be 60% of the CM domain height, centered in that domain
+        colorbar_len = cm_domain_height * 0.9
+        # CM domain goes from y=1 down to y=(1 - cm_domain_height)
+        # Center is at y = 1 - cm_domain_height/2
+        colorbar_y = 1.0 - (cm_domain_height / 2)
 
         fig.add_trace(
             go.Heatmap(
@@ -1374,16 +1397,25 @@ class TrainingVisualizer:
                 text=cm,
                 texttemplate="%{text}",
                 hovertemplate="Pred: %{x}<br>True: %{y}<br>Count: %{text}<br>Rate: %{z:.2f}<extra></extra>",
+                colorbar=dict(
+                    len=colorbar_len,
+                    y=colorbar_y,
+                    yanchor="middle",
+                    thickness=15,
+                ),
             ),
             row=1,
             col=1,
         )
-        fig.update_xaxes(title_text="Predicted", row=1, col=1)
-        fig.update_yaxes(title_text="True", row=1, col=1)
+        fig.update_xaxes(title_text="Pred", row=1, col=1)  # Shortened to avoid overlap
+        fig.update_yaxes(title_text="GT", row=1, col=1, scaleanchor="x", scaleratio=1)  # Shortened for consistency
 
-        # Add sample images for each non-empty cell (in column 2)
+        # Collect source info for all cells to display in table below
+        all_source_info: list[dict[str, Any]] = []  # List of {cell, sample_idx, source_info}
+
+        # Add sample images for each non-empty cell (rows 2+)
         for cell_row_idx, (gt_idx, pred_idx) in enumerate(sorted(non_empty_cells)):
-            row = cell_row_idx + 1  # Rows start at 1
+            row = cell_row_idx + 2  # Rows start at 2 (row 1 is confusion matrix)
 
             sample_indices = cell_samples[(gt_idx, pred_idx)]
             np.random.shuffle(sample_indices)
@@ -1391,11 +1423,26 @@ class TrainingVisualizer:
 
             # Create a composite image by concatenating samples horizontally
             sample_images = []
-            for sample_idx in selected_indices:
+
+            for sample_pos, sample_idx in enumerate(selected_indices):
                 img = images[sample_idx]
                 if img.ndim == 2:
                     img = np.stack([img] * 3, axis=-1)
                 sample_images.append(img)
+
+                # Extract source information from metadata for table
+                if metadata and sample_idx < len(metadata):
+                    meta = metadata[sample_idx]
+                    source = meta.get("source", "")
+                    patient_id = meta.get("patient_id", "")
+                    level = meta.get("level", "") or meta.get("ivd", "")
+                    all_source_info.append({
+                        "cell": f"GT={display_names[gt_idx]}→Pred={display_names[pred_idx]}",
+                        "pos": sample_pos + 1,
+                        "source": source,
+                        "patient_id": patient_id,
+                        "level": level,
+                    })
 
             if sample_images:
                 # Resize all images to same size for concatenation
@@ -1405,6 +1452,7 @@ class TrainingVisualizer:
                 resized_images = []
                 for img in sample_images:
                     from PIL import Image as PILImage
+
                     pil_img = PILImage.fromarray(img)
                     pil_img = pil_img.resize((target_w, target_h), PILImage.Resampling.BILINEAR)
                     resized_images.append(np.array(pil_img))
@@ -1440,29 +1488,65 @@ class TrainingVisualizer:
                 bordered_image[:, :border_width] = border_color
                 bordered_image[:, -border_width:] = border_color
 
-                fig.add_trace(go.Image(z=bordered_image), row=row, col=2)
+                fig.add_trace(go.Image(z=bordered_image), row=row, col=1)
 
-            fig.update_xaxes(showticklabels=False, row=row, col=2)
-            fig.update_yaxes(showticklabels=False, row=row, col=2)
+            fig.update_xaxes(showticklabels=False, row=row, col=1)
+            fig.update_yaxes(showticklabels=False, row=row, col=1)
 
         # Calculate appropriate figure dimensions
-        sample_row_height = 120
-        total_height = max(400, n_cell_rows * sample_row_height)
+        # The confusion matrix needs more height to display properly with labels
+        cm_height = 400  # Height for confusion matrix section
+        sample_row_height = 200  # Height for each sample row
+        # Add extra height for source info table if we have source info
+        table_height = 450 if all_source_info else 0
+        total_height = cm_height + n_cell_rows * sample_row_height + table_height
 
         fig.update_layout(
             title=f"Confusion Matrix with Samples - {display_name}",
             height=total_height,
-            width=max(900, max_samples_per_cell * 150 + 400),
+            width=max(600, max_samples_per_cell * 180),
             showlegend=False,
+            # Add margin at bottom for source info table
+            margin=dict(b=table_height + 20) if all_source_info else None,
         )
+
+        # Add source info as a table annotation at the bottom
+        if all_source_info:
+            # Build table text with columns: Cell | Pos | Source | Patient ID | Level
+            table_header = "| Cell | # | Source | Patient ID | Level |"
+            table_separator = "|------|---|--------|------------|-------|"
+            table_rows = [table_header, table_separator]
+
+            for info in all_source_info:
+                cell = info["cell"]
+                pos = info["pos"]
+                source = info["source"] or "-"
+                patient_id = info["patient_id"][:12] if info["patient_id"] else "-"
+                level = f"L{info['level']}" if info["level"] else "-"
+                table_rows.append(f"| {cell} | {pos} | {source} | {patient_id} | {level} |")
+
+            table_text = "<br>".join(table_rows)
+
+            fig.add_annotation(
+                text=f"<b>Sample Sources:</b><br>{table_text}",
+                xref="paper",
+                yref="paper",
+                x=0,
+                y=-0.02,
+                xanchor="left",
+                yanchor="top",
+                showarrow=False,
+                font=dict(size=10, family="monospace"),
+                align="left",
+            )
 
         output_filename = filename or f"confusion_matrix_samples_{target_label}"
         self._save_figure(fig, output_filename, log_to_trackio)
 
-        # Log to trackio
+        # Log to trackio (convert Figure to JSON for serialization)
         if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
             self._trackio.log({
-                f"confusion_matrix_samples/{target_label}": fig,
+                f"confusion_matrix_samples/{target_label}": fig.to_json(),
             })
 
         return fig
@@ -1557,11 +1641,18 @@ class TrainingVisualizer:
         n_cols = min(4, n_samples)
         n_rows = (n_samples + n_cols - 1) // n_cols
 
+        # Calculate dynamic vertical spacing to avoid plotly error
+        if n_rows > 1:
+            max_v_spacing = 0.9 / (n_rows - 1)
+            v_spacing = min(0.12, max_v_spacing)
+        else:
+            v_spacing = 0.12
+
         fig = make_subplots(
             rows=n_rows,
             cols=n_cols,
             horizontal_spacing=0.02,
-            vertical_spacing=0.12,
+            vertical_spacing=v_spacing,
         )
 
         labels = list(predictions.keys())
@@ -1797,12 +1888,19 @@ class TrainingVisualizer:
             count = mask.sum()
             subplot_titles.extend([f"{cat_name} ({count} total)"] + [""] * (n_cols - 1))
 
+        # Calculate dynamic vertical spacing to avoid plotly error
+        if n_rows > 1:
+            max_v_spacing = 0.9 / (n_rows - 1)
+            v_spacing = min(0.08, max_v_spacing)
+        else:
+            v_spacing = 0.08
+
         fig = make_subplots(
             rows=n_rows,
             cols=n_cols,
             subplot_titles=subplot_titles,
             horizontal_spacing=0.02,
-            vertical_spacing=0.08,
+            vertical_spacing=v_spacing,
         )
 
         for row_idx, (cat_name, mask, border_color) in enumerate(categories):
@@ -2091,5 +2189,163 @@ class TrainingVisualizer:
                     f"confusion_summary/{label}_fp": fp_counts[i],
                     f"confusion_summary/{label}_fn": fn_counts[i],
                 })
+
+        return fig
+
+    def plot_label_distribution(
+        self,
+        distributions: dict[str, dict[str, dict[int | str, int]]],
+        target_labels: list[str] | None = None,
+        filename: str = "label_distribution",
+        log_to_trackio: bool | None = None,
+    ) -> go.Figure:
+        """Plot label distribution across train/val/test splits.
+
+        Creates a multi-panel visualization showing the distribution of each
+        label's classes across different data splits. Useful for verifying
+        that stratified splitting preserved label distributions.
+
+        Args:
+            distributions: Nested dict: {split_name: {label_name: {class: count}}}.
+                Example: {"train": {"pfirrmann": {1: 100, 2: 150, ...}}, ...}
+            target_labels: Labels to visualize. If None, uses all labels found.
+            filename: Output filename.
+            log_to_trackio: Override default trackio logging setting.
+
+        Returns:
+            Plotly Figure with label distribution charts.
+        """
+        splits = list(distributions.keys())
+        if not splits:
+            logger.warning("No distributions provided")
+            return go.Figure()
+
+        # Get all labels from the first split
+        first_split = distributions[splits[0]]
+        labels = target_labels or list(first_split.keys())
+
+        if not labels:
+            logger.warning("No labels found in distributions")
+            return go.Figure()
+
+        # Calculate grid layout
+        n_labels = len(labels)
+        n_cols = min(3, n_labels)
+        n_rows = (n_labels + n_cols - 1) // n_cols
+
+        # Calculate dynamic vertical spacing
+        if n_rows > 1:
+            max_v_spacing = 0.9 / (n_rows - 1)
+            v_spacing = min(0.15, max_v_spacing)
+        else:
+            v_spacing = 0.15
+
+        subplot_titles = [LABEL_DISPLAY_NAMES.get(lbl, lbl) for lbl in labels]
+
+        fig = make_subplots(
+            rows=n_rows,
+            cols=n_cols,
+            subplot_titles=subplot_titles,
+            horizontal_spacing=0.08,
+            vertical_spacing=v_spacing,
+        )
+
+        # Color mapping for splits
+        split_colors = {
+            "train": "#3498db",  # Blue
+            "val": "#e74c3c",    # Red
+            "test": "#2ecc71",   # Green
+        }
+
+        for idx, label in enumerate(labels):
+            row = idx // n_cols + 1
+            col = idx % n_cols + 1
+
+            # Collect all unique classes across all splits for this label
+            all_classes: set[int | str] = set()
+            for split in splits:
+                if label in distributions[split]:
+                    all_classes.update(distributions[split][label].keys())
+
+            # Sort classes (handle mixed int/str)
+            try:
+                sorted_classes = sorted(all_classes, key=lambda x: (isinstance(x, str), x))
+            except TypeError:
+                sorted_classes = sorted(all_classes, key=str)
+
+            class_names = [str(c) for c in sorted_classes]
+
+            # Add bars for each split
+            for split in splits:
+                if label not in distributions[split]:
+                    continue
+
+                label_dist = distributions[split][label]
+                counts = [label_dist.get(c, 0) for c in sorted_classes]
+
+                # Calculate total for percentage annotation
+                total = sum(counts)
+
+                fig.add_trace(
+                    go.Bar(
+                        name=split.capitalize(),
+                        x=class_names,
+                        y=counts,
+                        text=[f"{c}" for c in counts],
+                        textposition="auto",
+                        marker_color=split_colors.get(split, "#95a5a6"),
+                        legendgroup=split,
+                        showlegend=(idx == 0),  # Only show legend for first subplot
+                        hovertemplate=(
+                            f"{split.capitalize()}<br>"
+                            "Class: %{x}<br>"
+                            "Count: %{y}<br>"
+                            f"Total: {total}<extra></extra>"
+                        ),
+                    ),
+                    row=row,
+                    col=col,
+                )
+
+            fig.update_xaxes(title_text="Class", row=row, col=col)
+            fig.update_yaxes(title_text="Count", row=row, col=col)
+
+        # Build title with split totals
+        split_totals = []
+        for split in splits:
+            total = sum(
+                sum(label_dist.values())
+                for label_dist in distributions[split].values()
+            ) // len(labels)  # Divide by num labels since each sample has all labels
+            split_totals.append(f"{split.capitalize()}: {total}")
+
+        title = f"Label Distribution by Split ({' | '.join(split_totals)})"
+
+        fig.update_layout(
+            title=title,
+            barmode="group",
+            height=350 * n_rows,
+            width=400 * n_cols,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+            ),
+        )
+
+        self._save_figure(fig, filename, log_to_trackio)
+
+        # Log distribution stats to trackio
+        if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
+            for split, split_dist in distributions.items():
+                for label, class_counts in split_dist.items():
+                    total = sum(class_counts.values())
+                    for cls, count in class_counts.items():
+                        self._trackio.log({
+                            f"distribution/{split}/{label}/class_{cls}": count,
+                            f"distribution/{split}/{label}/class_{cls}_pct": count / total * 100 if total > 0 else 0,
+                        })
 
         return fig

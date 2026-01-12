@@ -27,11 +27,12 @@ from typing import Any, Literal
 
 import numpy as np
 import torch
+from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
+from loguru import logger
 from PIL import Image
 from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import Dataset
 from torchvision import transforms
-
 
 # IVD level mapping (L1/L2 to L5/S1)
 LEVEL_TO_IDX = {
@@ -292,28 +293,130 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
         """Get list of unique patient keys (source_patientid)."""
         return list(set(r["patient_key"] for r in self.records))
 
-    def _get_patient_stratify_labels(self, patients: list[str]) -> np.ndarray:
-        """Get stratification labels for each patient.
+    def _get_patient_single_label(self, patients: list[str], label: str) -> np.ndarray:
+        """Get single stratification label for each patient.
 
-        Uses the most frequent Pfirrmann grade across all IVD levels for the patient.
-        This ensures class distribution is preserved across splits.
+        Uses the most frequent value of the specified label across all IVD levels.
+        Used for single-task training where only one label is targeted.
+
+        Args:
+            patients: List of patient keys.
+            label: The label name to stratify on.
+
+        Returns:
+            Array of shape (n_patients,) with the most frequent label value per patient.
         """
-        patient_to_pfirrmann: dict[str, list[int]] = {}
+        patient_set = set(patients)
+        patient_to_labels: dict[str, list[int]] = {p: [] for p in patients}
+
+        # Map label name to record key
+        label_to_record_key = {
+            "pfirrmann": "pfirrmann",
+            "modic": "modic",
+            "herniation": "herniation",
+            "bulging": "bulging",
+            "upper_endplate": "upper_endplate",
+            "lower_endplate": "lower_endplate",
+            "spondy": "spondylolisthesis",
+            "narrowing": "narrowing",
+        }
+        record_key = label_to_record_key.get(label, label)
+
         for record in self.records:
             patient_key = record["patient_key"]
-            if patient_key in set(patients):
-                if patient_key not in patient_to_pfirrmann:
-                    patient_to_pfirrmann[patient_key] = []
-                patient_to_pfirrmann[patient_key].append(record["pfirrmann"])
+            if patient_key in patient_set:
+                patient_to_labels[patient_key].append(record[record_key])
 
-        # Use most frequent Pfirrmann grade as the stratification label
+        # Use most frequent value as the stratification label
         labels = []
         for patient in patients:
-            grades = patient_to_pfirrmann.get(patient, [3])  # Default to grade 3
-            most_common = Counter(grades).most_common(1)[0][0]
-            labels.append(most_common)
+            values = patient_to_labels.get(patient, [0])
+            if not values:
+                values = [0]
+
+            strat_label = max(values)
+            labels.append(strat_label)
+
+            # most_common = Counter(values).most_common(1)[0][0]
+            # labels.append(most_common)
 
         return np.array(labels)
+
+    def _get_patient_multilabel_matrix(self, patients: list[str]) -> np.ndarray:
+        """Get multilabel binary matrix for each patient.
+
+        For each patient, aggregates labels across all IVD levels:
+        - Binary labels: 1 if any IVD level has the condition
+        - Multiclass labels (pfirrmann, modic): converted to binary indicators
+          for each class (one-hot style aggregation with max across levels)
+
+        Args:
+            patients: List of patient keys.
+
+        Returns:
+            Array of shape (n_patients, n_label_columns) with binary indicators.
+            Columns correspond to all target labels, with multiclass labels
+            expanded into binary indicators.
+        """
+        patient_set = set(patients)
+        patient_idx = {p: i for i, p in enumerate(patients)}
+
+        # Build column structure based on target_labels
+        # Binary labels: 1 column each
+        # Multiclass labels: expanded to n_classes columns
+        columns: list[tuple[str, int | None]] = []  # (label_name, class_idx or None)
+        for label in self.target_labels:
+            info = LABEL_INFO[label]
+            if info["type"] == "multiclass":
+                for cls_idx in range(info["num_classes"]):
+                    columns.append((label, cls_idx))
+            else:
+                columns.append((label, None))
+
+        n_patients = len(patients)
+        n_columns = len(columns)
+        matrix = np.zeros((n_patients, n_columns), dtype=np.float32)
+
+        # Map label name to record key
+        label_to_record_key = {
+            "pfirrmann": "pfirrmann",
+            "modic": "modic",
+            "herniation": "herniation",
+            "bulging": "bulging",
+            "upper_endplate": "upper_endplate",
+            "lower_endplate": "lower_endplate",
+            "spondy": "spondylolisthesis",
+            "narrowing": "narrowing",
+        }
+
+        # Aggregate labels per patient
+        for record in self.records:
+            patient_key = record["patient_key"]
+            if patient_key not in patient_set:
+                continue
+
+            row_idx = patient_idx[patient_key]
+
+            for col_idx, (label, cls_idx) in enumerate(columns):
+                record_key = label_to_record_key.get(label, label)
+                value = record[record_key]
+
+                if cls_idx is not None:
+                    # Multiclass: check if this class is present
+                    # For pfirrmann (1-5), compare directly
+                    # For modic (0-3), compare directly
+                    if label == "pfirrmann":
+                        if value == cls_idx + 1:  # pfirrmann is 1-indexed
+                            matrix[row_idx, col_idx] = 1.0
+                    else:
+                        if value == cls_idx:
+                            matrix[row_idx, col_idx] = 1.0
+                else:
+                    # Binary: use max (if any IVD has condition, patient has it)
+                    if value > 0:
+                        matrix[row_idx, col_idx] = 1.0
+
+        return matrix
 
     def _split_patients(
         self,
@@ -324,11 +427,52 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
     ) -> tuple[set[str], set[str], set[str]]:
         """Split patients into train/val/test sets with stratification.
 
-        Uses stratified splitting based on Pfirrmann grade distribution
-        to ensure balanced class representation across splits.
+        Automatically selects the appropriate stratification strategy:
+        - Single-label mode (1 target label): Uses standard StratifiedShuffleSplit
+          with the most frequent label value per patient.
+        - Multilabel mode (2+ target labels): Uses MultilabelStratifiedShuffleSplit
+          (iterative stratification) to preserve distribution across all labels.
+
+        Args:
+            patients: List of unique patient keys.
+            val_ratio: Fraction of data for validation set.
+            test_ratio: Fraction of data for test set.
+            seed: Random seed for reproducibility.
+
+        Returns:
+            Tuple of (train_patients, val_patients, test_patients) as sets.
+        """
+        is_multilabel = len(self.target_labels) > 1
+
+        if is_multilabel:
+            return self._split_patients_multilabel(
+                patients, val_ratio, test_ratio, seed
+            )
+        else:
+            return self._split_patients_single_label(
+                patients, val_ratio, test_ratio, seed
+            )
+
+    def _split_patients_single_label(
+        self,
+        patients: list[str],
+        val_ratio: float,
+        test_ratio: float,
+        seed: int,
+    ) -> tuple[set[str], set[str], set[str]]:
+        """Split patients using single-label stratification.
+
+        Uses sklearn's StratifiedShuffleSplit with the most frequent value
+        of the single target label per patient.
         """
         patients_arr = np.array(patients)
-        stratify_labels = self._get_patient_stratify_labels(patients)
+        # Use the single target label for stratification
+        stratify_labels = self._get_patient_single_label(
+            patients, self.target_labels[0]
+        )
+
+        label_counts = Counter(stratify_labels)
+        logger.debug(f"Label Distribution passed to Stratifier: {label_counts}")
 
         # First split: separate test set
         if test_ratio > 0:
@@ -350,11 +494,63 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
 
         # Second split: separate val from train
         if val_ratio > 0:
-            # Adjust val_ratio for remaining data
             adjusted_val_ratio = val_ratio / (1 - test_ratio)
             splitter_val = StratifiedShuffleSplit(
                 n_splits=1,
                 test_size=adjusted_val_ratio,
+                random_state=seed,
+            )
+            train_idx, val_idx = next(
+                splitter_val.split(remaining_patients, remaining_labels)
+            )
+            train_patients = set(remaining_patients[train_idx])
+            val_patients = set(remaining_patients[val_idx])
+        else:
+            train_patients = set(remaining_patients)
+            val_patients = set()
+
+        return train_patients, val_patients, test_patients
+
+    def _split_patients_multilabel(
+        self,
+        patients: list[str],
+        val_ratio: float,
+        test_ratio: float,
+        seed: int,
+    ) -> tuple[set[str], set[str], set[str]]:
+        """Split patients using multilabel iterative stratification.
+
+        Uses iterstrat's MultilabelStratifiedShuffleSplit to preserve
+        the distribution of all target labels across splits.
+        """
+        patients_arr = np.array(patients)
+        label_matrix = self._get_patient_multilabel_matrix(patients)
+
+        # First split: separate test set
+        if test_ratio > 0:
+            # iterstrat type stubs incorrectly mark test_size as str
+            splitter_test = MultilabelStratifiedShuffleSplit(
+                n_splits=1,
+                test_size=test_ratio,  # pyright: ignore[reportArgumentType]
+                random_state=seed,
+            )
+            train_val_idx, test_idx = next(
+                splitter_test.split(patients_arr, label_matrix)
+            )
+            test_patients = set(patients_arr[test_idx])
+            remaining_patients = patients_arr[train_val_idx]
+            remaining_labels = label_matrix[train_val_idx]
+        else:
+            test_patients = set()
+            remaining_patients = patients_arr
+            remaining_labels = label_matrix
+
+        # Second split: separate val from train
+        if val_ratio > 0:
+            adjusted_val_ratio = val_ratio / (1 - test_ratio)
+            splitter_val = MultilabelStratifiedShuffleSplit(
+                n_splits=1,
+                test_size=adjusted_val_ratio,  # pyright: ignore[reportArgumentType]
                 random_state=seed,
             )
             train_idx, val_idx = next(
@@ -484,6 +680,38 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
             "target_labels": self.target_labels,
             "split": self.split,
         }
+
+    def get_label_distribution(self) -> dict[str, dict[int | str, int]]:
+        """Get distribution of each label in the dataset.
+
+        Returns counts for each class within each target label.
+        Useful for visualizing label balance across train/val/test splits.
+
+        Returns:
+            Dictionary mapping label names to class counts.
+            For multiclass labels (pfirrmann, modic): {class_value: count}
+            For binary labels: {0: count, 1: count}
+        """
+        distribution: dict[str, dict[int | str, int]] = {}
+
+        # Map label name to record key
+        label_to_record_key = {
+            "pfirrmann": "pfirrmann",
+            "modic": "modic",
+            "herniation": "herniation",
+            "bulging": "bulging",
+            "upper_endplate": "upper_endplate",
+            "lower_endplate": "lower_endplate",
+            "spondy": "spondylolisthesis",
+            "narrowing": "narrowing",
+        }
+
+        for label in self.target_labels:
+            record_key = label_to_record_key.get(label, label)
+            values = [r[record_key] for r in self.records]
+            distribution[label] = dict(Counter(values))
+
+        return distribution
 
     def compute_class_weights(self) -> dict[str, torch.Tensor]:
         """Compute class weights for imbalanced classification.

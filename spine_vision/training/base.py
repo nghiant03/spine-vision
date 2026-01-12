@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Generic, Literal, Sequence, TypeVar
+from typing import Any, Callable, Generic, Literal, Sequence, TypeVar
 
 import numpy as np
 import torch
@@ -27,6 +27,30 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
 from spine_vision.core import BaseConfig
+
+
+def _create_worker_init_fn(seed: int) -> Callable[[int], None]:
+    """Create a worker init function that seeds each worker deterministically.
+
+    Each DataLoader worker gets a unique seed based on base seed + worker_id.
+    This ensures reproducible data loading and augmentation across runs.
+
+    Args:
+        seed: Base random seed.
+
+    Returns:
+        Worker init function for DataLoader.
+    """
+    import random
+
+    def worker_init_fn(worker_id: int) -> None:
+        worker_seed = seed + worker_id
+        random.seed(worker_seed)
+        np.random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+
+    return worker_init_fn
+
 
 # Type variables for generic trainer
 TConfig = TypeVar("TConfig", bound="TrainingConfig")
@@ -110,9 +134,10 @@ class TrainingConfig(BaseConfig):
 
     # Trackio logging
     use_trackio: bool = False
+    use_space: bool = True
     trackio_project: str = "spine-vision"
     trackio_run_name: str | None = None
-    trackio_tags: list[str] | None = None
+    
 
     # Reproducibility
     seed: int = 42
@@ -483,14 +508,14 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         trackio_config["output_path"] = str(self.config.output_path)
         trackio_config["logs_path"] = str(self.config.logs_path)
 
+        space_id = self.config.trackio_project if self.config.use_space else None
         self.accelerator.init_trackers(
             project_name=self.config.trackio_project,
             config=trackio_config,
             init_kwargs={
                 "trackio": {
                     "name": self.config.trackio_run_name,
-                    "tags": self.config.trackio_tags,
-                    "dir": str(self.config.output_path),
+                    "space_id": space_id
                 }
             },
         )
@@ -526,13 +551,19 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+            # Enable benchmark for performance (auto-tune algorithms)
+            torch.backends.cudnn.benchmark = True
 
     def _create_dataloader(
         self,
         dataset: TDataset,
         shuffle: bool = True,
     ) -> DataLoader[Any]:
-        """Create a DataLoader from dataset."""
+        """Create a DataLoader from dataset with deterministic worker seeding."""
+        # Create generator for reproducible shuffling
+        generator = torch.Generator()
+        generator.manual_seed(self.config.seed)
+
         return DataLoader(
             dataset,
             batch_size=self.config.batch_size,
@@ -540,6 +571,8 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             num_workers=self.config.num_workers,
             pin_memory=self.config.pin_memory,
             drop_last=shuffle,
+            worker_init_fn=_create_worker_init_fn(self.config.seed),
+            generator=generator,
         )
 
     def _create_optimizer(self) -> Optimizer:
@@ -601,8 +634,14 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         if self.config.checkpoint_path:
             self._load_checkpoint(self.config.checkpoint_path)
 
+        # Hook: training begins
+        self.on_train_begin()
+
         for epoch in range(self.current_epoch, self.config.num_epochs):
             self.current_epoch = epoch
+
+            # Hook: epoch begins
+            self.on_epoch_begin(epoch)
 
             # Training epoch
             train_loss = self._train_epoch()
@@ -892,6 +931,24 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
 
     # ==================== Training Hooks ====================
     # Override these methods for custom behavior
+
+    def on_train_begin(self) -> None:
+        """Called before training starts.
+
+        Use this for dataset logging, initial visualizations,
+        or any setup that should happen after model initialization.
+        """
+        pass
+
+    def on_epoch_begin(self, epoch: int) -> None:
+        """Called at the beginning of each epoch.
+
+        Args:
+            epoch: Current epoch number (0-indexed).
+
+        Use this for per-epoch setup like unfreezing layers.
+        """
+        pass
 
     def on_epoch_end(self, epoch: int, metrics: dict[str, float]) -> None:
         """Called at the end of each epoch.
