@@ -1,8 +1,7 @@
 """Dataset creation and conversion utilities.
 
 This module provides classes and functions for creating and converting datasets:
-- nnunet: Convert datasets to nnU-Net format
-- ivd_coords: Create IVD coordinates dataset
+- localization: Create localization dataset
 - phenikaa: Preprocess Phenikaa dataset (OCR + matching)
 - classification: Create classification dataset (Phenikaa + SPIDER)
 - rsna: RSNA dataset utilities
@@ -17,26 +16,41 @@ from spine_vision.datasets.classification import (
     ClassificationDatasetProcessor,
 )
 from spine_vision.datasets.classification import main as create_classification_dataset
-from spine_vision.datasets.ivd_coords import (
-    IVDCoordsDatasetProcessor,
-    IVDDatasetConfig,
+from spine_vision.datasets.localization import (
+    LocalizationDatasetConfig,
+    LocalizationDatasetProcessor,
 )
-from spine_vision.datasets.ivd_coords import main as create_ivd_dataset
+from spine_vision.datasets.localization import main as create_localization_dataset
 from spine_vision.datasets.phenikaa import (
     PhenikkaaProcessor,
     PreprocessConfig,
 )
 from spine_vision.datasets.phenikaa import main as preprocess_phenikaa
+from spine_vision.datasets.labels import (
+    AVAILABLE_LABELS,
+    IDX_TO_LEVEL,
+    LABEL_COLORS,
+    LABEL_DISPLAY_NAMES,
+    LABEL_INFO,
+    LEVEL_TO_IDX,
+)
 from spine_vision.datasets.rsna import get_series_type, load_series_mapping
 
 __all__ = [
+    # Label constants
+    "AVAILABLE_LABELS",
+    "IDX_TO_LEVEL",
+    "LABEL_COLORS",
+    "LABEL_DISPLAY_NAMES",
+    "LABEL_INFO",
+    "LEVEL_TO_IDX",
     # Base classes
     "BaseProcessor",
     "ProcessingResult",
-    # IVD coordinates dataset
-    "IVDDatasetConfig",
-    "IVDCoordsDatasetProcessor",
-    "create_ivd_dataset",
+    # Localization dataset
+    "LocalizationDatasetConfig",
+    "LocalizationDatasetProcessor",
+    "create_localization_dataset",
     # Phenikaa dataset
     "PreprocessConfig",
     "PhenikkaaProcessor",

@@ -30,7 +30,7 @@ from spine_vision.training.datasets.classification import (
 from spine_vision.training.metrics import MTLClassificationMetrics
 from spine_vision.training.models import MultiTaskClassifier, TaskConfig
 from spine_vision.training.registry import register_trainer
-from spine_vision.training.visualization import (
+from spine_vision.visualization import (
     TrainingVisualizer,
     load_classification_original_images,
 )

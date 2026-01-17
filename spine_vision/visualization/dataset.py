@@ -1,13 +1,12 @@
-"""Data analysis and visualization for classification dataset.
+"""Dataset visualization utilities.
 
-Generates comprehensive analysis including:
-- Dataset statistics (samples, patients, class distributions)
-- Sample images for each possible value of each label
-- Class distribution histograms
-- Co-occurrence heatmaps between labels
+Provides Plotly-based interactive visualizations for dataset statistics:
+- Dataset statistics (samples by level, source, grades)
+- Label distributions
+- Label co-occurrence analysis
+- Sample images per class
 """
 
-import dataclasses
 from collections import defaultdict
 from pathlib import Path
 from typing import Literal
@@ -18,40 +17,14 @@ from loguru import logger
 from PIL import Image
 from plotly.subplots import make_subplots
 
-from spine_vision.core import setup_logger
-from spine_vision.training.datasets.classification import (
+from spine_vision.datasets.labels import (
     AVAILABLE_LABELS,
-    ClassificationDataset,
     IDX_TO_LEVEL,
-    LABEL_INFO,
-)
-from spine_vision.training.visualization import (
     LABEL_COLORS,
     LABEL_DISPLAY_NAMES,
+    LABEL_INFO,
 )
-
-
-@dataclasses.dataclass
-class AnalyzeConfig:
-    """Configuration for dataset analysis."""
-
-    # Path to classification dataset
-    data_path: Path = Path("data/processed/classification")
-
-    # Output directory for visualizations
-    output_path: Path = Path("analysis/classification")
-
-    # Output format
-    output_mode: Literal["browser", "html", "image"] = "html"
-
-    # Number of samples to show per class value
-    samples_per_class: int = 4
-
-    # Image display size
-    display_size: tuple[int, int] = (128, 128)
-
-    # Enable verbose logging
-    verbose: bool = False
+from spine_vision.training.datasets.classification import ClassificationDataset
 
 
 def _load_sample_image(
@@ -82,38 +55,47 @@ def _load_sample_image(
     return np.stack([img_arr, img_arr, img_arr], axis=-1)
 
 
-def _save_figure(
+def _save_plotly_figure(
     fig: go.Figure,
-    output_path: Path,
+    output_path: Path | None,
     filename: str,
     output_mode: str,
 ) -> None:
-    """Save figure based on output mode."""
-    output_path.mkdir(parents=True, exist_ok=True)
-
+    """Save Plotly figure based on output mode."""
     if output_mode == "browser":
         fig.show()
-    elif output_mode == "html":
-        path = output_path / f"{filename}.html"
-        fig.write_html(path)
-        logger.info(f"Saved: {path}")
-    elif output_mode == "image":
-        path = output_path / f"{filename}.png"
-        try:
-            fig.write_image(path)
-            logger.info(f"Saved: {path}")
-        except Exception as e:
-            logger.warning(f"Failed to save image: {e}. Falling back to HTML.")
+    elif output_path is not None:
+        output_path.mkdir(parents=True, exist_ok=True)
+        if output_mode == "html":
             path = output_path / f"{filename}.html"
             fig.write_html(path)
+            logger.debug(f"Saved: {path}")
+        elif output_mode == "image":
+            path = output_path / f"{filename}.png"
+            try:
+                fig.write_image(path)
+                logger.debug(f"Saved: {path}")
+            except Exception as e:
+                logger.warning(f"Failed to save image: {e}. Falling back to HTML.")
+                path = output_path / f"{filename}.html"
+                fig.write_html(path)
 
 
 def plot_dataset_statistics(
     dataset: ClassificationDataset,
-    output_path: Path,
-    output_mode: str,
+    output_path: Path | None = None,
+    output_mode: str = "html",
 ) -> go.Figure:
-    """Plot overall dataset statistics."""
+    """Plot overall dataset statistics.
+
+    Args:
+        dataset: Classification dataset to analyze.
+        output_path: Directory for saving. If None, only shows in browser mode.
+        output_mode: Output format - 'browser', 'html', or 'image'.
+
+    Returns:
+        Plotly figure with dataset statistics.
+    """
     stats = dataset.get_stats()
 
     fig = make_subplots(
@@ -198,16 +180,25 @@ def plot_dataset_statistics(
         showlegend=False,
     )
 
-    _save_figure(fig, output_path, "dataset_statistics", output_mode)
+    _save_plotly_figure(fig, output_path, "dataset_statistics", output_mode)
     return fig
 
 
 def plot_binary_label_distributions(
     dataset: ClassificationDataset,
-    output_path: Path,
-    output_mode: str,
+    output_path: Path | None = None,
+    output_mode: str = "html",
 ) -> go.Figure:
-    """Plot distributions for all binary labels."""
+    """Plot distributions for all binary labels.
+
+    Args:
+        dataset: Classification dataset to analyze.
+        output_path: Directory for saving. If None, only shows in browser mode.
+        output_mode: Output format - 'browser', 'html', or 'image'.
+
+    Returns:
+        Plotly figure with binary label distributions.
+    """
     binary_labels = [
         label for label in AVAILABLE_LABELS if LABEL_INFO[label]["type"] == "binary"
     ]
@@ -269,16 +260,25 @@ def plot_binary_label_distributions(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
 
-    _save_figure(fig, output_path, "binary_label_distributions", output_mode)
+    _save_plotly_figure(fig, output_path, "binary_label_distributions", output_mode)
     return fig
 
 
 def plot_label_cooccurrence(
     dataset: ClassificationDataset,
-    output_path: Path,
-    output_mode: str,
+    output_path: Path | None = None,
+    output_mode: str = "html",
 ) -> go.Figure:
-    """Plot co-occurrence heatmap between binary labels."""
+    """Plot co-occurrence heatmap between binary labels.
+
+    Args:
+        dataset: Classification dataset to analyze.
+        output_path: Directory for saving. If None, only shows in browser mode.
+        output_mode: Output format - 'browser', 'html', or 'image'.
+
+    Returns:
+        Plotly figure with co-occurrence heatmap.
+    """
     binary_labels = [
         label for label in AVAILABLE_LABELS if LABEL_INFO[label]["type"] == "binary"
     ]
@@ -328,19 +328,90 @@ def plot_label_cooccurrence(
         yaxis_title="Label",
     )
 
-    _save_figure(fig, output_path, "label_cooccurrence", output_mode)
+    _save_plotly_figure(fig, output_path, "label_cooccurrence", output_mode)
+    return fig
+
+
+def plot_pfirrmann_by_level(
+    dataset: ClassificationDataset,
+    output_path: Path | None = None,
+    output_mode: str = "html",
+) -> go.Figure:
+    """Plot Pfirrmann grade distribution by IVD level.
+
+    Args:
+        dataset: Classification dataset to analyze.
+        output_path: Directory for saving. If None, only shows in browser mode.
+        output_mode: Output format - 'browser', 'html', or 'image'.
+
+    Returns:
+        Plotly figure with Pfirrmann distribution by level.
+    """
+    # Count Pfirrmann grades per level
+    level_pfirrmann: dict[str, dict[int, int]] = {}
+    levels = ["L1/L2", "L2/L3", "L3/L4", "L4/L5", "L5/S1"]
+
+    for lvl in levels:
+        level_pfirrmann[lvl] = {i: 0 for i in range(1, 6)}
+
+    for record in dataset.records:
+        level = IDX_TO_LEVEL.get(record["level_idx"], "")
+        pfirrmann = record["pfirrmann"]
+        if level in level_pfirrmann:
+            level_pfirrmann[level][pfirrmann] += 1
+
+    fig = go.Figure()
+
+    colors = ["#27ae60", "#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"]
+
+    for grade in range(1, 6):
+        counts = [level_pfirrmann[lvl][grade] for lvl in levels]
+        fig.add_trace(
+            go.Bar(
+                name=f"Grade {grade}",
+                x=levels,
+                y=counts,
+                marker_color=colors[grade - 1],
+                text=counts,
+                textposition="auto",
+            )
+        )
+
+    fig.update_layout(
+        title="Pfirrmann Grade Distribution by IVD Level",
+        barmode="stack",
+        xaxis_title="IVD Level",
+        yaxis_title="Count",
+        height=500,
+        width=800,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+
+    _save_plotly_figure(fig, output_path, "pfirrmann_by_level", output_mode)
     return fig
 
 
 def plot_samples_per_class(
     dataset: ClassificationDataset,
     data_path: Path,
-    output_path: Path,
-    output_mode: str,
-    samples_per_class: int,
-    display_size: tuple[int, int],
+    output_path: Path | None = None,
+    output_mode: str = "html",
+    samples_per_class: int = 4,
+    display_size: tuple[int, int] = (128, 128),
 ) -> dict[str, go.Figure]:
-    """Plot sample images for each possible value of each label."""
+    """Plot sample images for each possible value of each label.
+
+    Args:
+        dataset: Classification dataset to analyze.
+        data_path: Path to dataset directory containing images.
+        output_path: Directory for saving. If None, only shows in browser mode.
+        output_mode: Output format - 'browser', 'html', or 'image'.
+        samples_per_class: Number of sample images to show per class value.
+        display_size: Size (H, W) for displayed images.
+
+    Returns:
+        Dictionary mapping label names to their Plotly figures.
+    """
     figures: dict[str, go.Figure] = {}
 
     # Map from label name to record key
@@ -457,110 +528,116 @@ def plot_samples_per_class(
             showlegend=False,
         )
 
-        _save_figure(fig, output_path, f"samples_{label}", output_mode)
+        _save_plotly_figure(fig, output_path, f"samples_{label}", output_mode)
         figures[label] = fig
 
     return figures
 
 
-def plot_pfirrmann_by_level(
-    dataset: ClassificationDataset,
-    output_path: Path,
-    output_mode: str,
-) -> go.Figure:
-    """Plot Pfirrmann grade distribution by IVD level."""
-    # Count Pfirrmann grades per level
-    level_pfirrmann: dict[str, dict[int, int]] = {}
-    levels = ["L1/L2", "L2/L3", "L3/L4", "L4/L5", "L5/S1"]
+class DatasetVisualizer:
+    """Visualizer for dataset statistics and analysis.
 
-    for lvl in levels:
-        level_pfirrmann[lvl] = {i: 0 for i in range(1, 6)}
+    Provides Plotly-based interactive visualizations for:
+    - Dataset statistics (samples by level, source, grades)
+    - Label distributions
+    - Label co-occurrence analysis
+    - Sample images per class
+    """
 
-    for record in dataset.records:
-        level = IDX_TO_LEVEL.get(record["level_idx"], "")
-        pfirrmann = record["pfirrmann"]
-        if level in level_pfirrmann:
-            level_pfirrmann[level][pfirrmann] += 1
+    def __init__(
+        self,
+        output_path: Path | None = None,
+        output_mode: Literal["browser", "html", "image"] = "html",
+    ) -> None:
+        """Initialize dataset visualizer.
 
-    fig = go.Figure()
+        Args:
+            output_path: Directory for saving visualizations.
+            output_mode: Output format - 'browser', 'html', or 'image'.
+        """
+        self.output_path = output_path
+        self.output_mode = output_mode
 
-    colors = ["#27ae60", "#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"]
-
-    for grade in range(1, 6):
-        counts = [level_pfirrmann[lvl][grade] for lvl in levels]
-        fig.add_trace(
-            go.Bar(
-                name=f"Grade {grade}",
-                x=levels,
-                y=counts,
-                marker_color=colors[grade - 1],
-                text=counts,
-                textposition="auto",
-            )
+    def plot_dataset_statistics(
+        self, dataset: ClassificationDataset
+    ) -> go.Figure:
+        """Plot overall dataset statistics."""
+        return plot_dataset_statistics(
+            dataset, self.output_path, self.output_mode
         )
 
-    fig.update_layout(
-        title="Pfirrmann Grade Distribution by IVD Level",
-        barmode="stack",
-        xaxis_title="IVD Level",
-        yaxis_title="Count",
-        height=500,
-        width=800,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-    )
+    def plot_binary_label_distributions(
+        self, dataset: ClassificationDataset
+    ) -> go.Figure:
+        """Plot distributions for all binary labels."""
+        return plot_binary_label_distributions(
+            dataset, self.output_path, self.output_mode
+        )
 
-    _save_figure(fig, output_path, "pfirrmann_by_level", output_mode)
-    return fig
+    def plot_label_cooccurrence(
+        self, dataset: ClassificationDataset
+    ) -> go.Figure:
+        """Plot co-occurrence heatmap between binary labels."""
+        return plot_label_cooccurrence(
+            dataset, self.output_path, self.output_mode
+        )
 
+    def plot_pfirrmann_by_level(
+        self, dataset: ClassificationDataset
+    ) -> go.Figure:
+        """Plot Pfirrmann grade distribution by IVD level."""
+        return plot_pfirrmann_by_level(
+            dataset, self.output_path, self.output_mode
+        )
 
-def main(config: AnalyzeConfig) -> None:
-    """Run dataset analysis."""
-    setup_logger(verbose=config.verbose)
+    def plot_samples_per_class(
+        self,
+        dataset: ClassificationDataset,
+        data_path: Path,
+        samples_per_class: int = 4,
+        display_size: tuple[int, int] = (128, 128),
+    ) -> dict[str, go.Figure]:
+        """Plot sample images for each possible value of each label."""
+        return plot_samples_per_class(
+            dataset,
+            data_path,
+            self.output_path,
+            self.output_mode,
+            samples_per_class,
+            display_size,
+        )
 
-    logger.info(f"Loading dataset from {config.data_path}")
+    def generate_all(
+        self,
+        dataset: ClassificationDataset,
+        data_path: Path,
+        samples_per_class: int = 4,
+        display_size: tuple[int, int] = (128, 128),
+    ) -> None:
+        """Generate all dataset visualizations.
 
-    # Load dataset with all splits combined
-    dataset = ClassificationDataset(
-        data_path=config.data_path,
-        split="all",
-        output_size=config.display_size,
-        augment=False,
-        normalize=False,
-    )
+        Args:
+            dataset: Classification dataset to analyze.
+            data_path: Path to dataset directory containing images.
+            samples_per_class: Number of sample images per class value.
+            display_size: Size (H, W) for displayed images.
+        """
+        logger.info("Generating dataset statistics...")
+        self.plot_dataset_statistics(dataset)
 
-    logger.info(f"Loaded {len(dataset)} samples")
+        logger.info("Generating binary label distributions...")
+        self.plot_binary_label_distributions(dataset)
 
-    # Create output directory
-    config.output_path.mkdir(parents=True, exist_ok=True)
+        logger.info("Generating label co-occurrence heatmap...")
+        self.plot_label_cooccurrence(dataset)
 
-    # Generate all visualizations
-    logger.info("Generating dataset statistics...")
-    plot_dataset_statistics(dataset, config.output_path, config.output_mode)
+        logger.info("Generating Pfirrmann by level distribution...")
+        self.plot_pfirrmann_by_level(dataset)
 
-    logger.info("Generating binary label distributions...")
-    plot_binary_label_distributions(dataset, config.output_path, config.output_mode)
+        logger.info("Generating samples per class for each label...")
+        self.plot_samples_per_class(
+            dataset, data_path, samples_per_class, display_size
+        )
 
-    logger.info("Generating label co-occurrence heatmap...")
-    plot_label_cooccurrence(dataset, config.output_path, config.output_mode)
-
-    logger.info("Generating Pfirrmann by level distribution...")
-    plot_pfirrmann_by_level(dataset, config.output_path, config.output_mode)
-
-    logger.info("Generating samples per class for each label...")
-    plot_samples_per_class(
-        dataset,
-        config.data_path,
-        config.output_path,
-        config.output_mode,
-        config.samples_per_class,
-        config.display_size,
-    )
-
-    logger.info(f"Analysis complete. Results saved to {config.output_path}")
-
-
-if __name__ == "__main__":
-    import tyro
-
-    config = tyro.cli(AnalyzeConfig)
-    main(config)
+        if self.output_path:
+            logger.info(f"All visualizations saved to {self.output_path}")

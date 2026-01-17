@@ -34,39 +34,11 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import Dataset
 from torchvision import transforms
 
-# IVD level mapping (L1/L2 to L5/S1)
-LEVEL_TO_IDX = {
-    "L1/L2": 0,
-    "L2/L3": 1,
-    "L3/L4": 2,
-    "L4/L5": 3,
-    "L5/S1": 4,
-}
-IDX_TO_LEVEL = {v: k for k, v in LEVEL_TO_IDX.items()}
-
-# All available classification labels
-AVAILABLE_LABELS: tuple[str, ...] = (
-    "pfirrmann",
-    "modic",
-    "herniation",
-    "bulging",
-    "upper_endplate",
-    "lower_endplate",
-    "spondy",
-    "narrowing",
+from spine_vision.datasets.labels import (
+    AVAILABLE_LABELS,
+    IDX_TO_LEVEL,
+    LABEL_INFO,
 )
-
-# Mapping from label names to their types and classes
-LABEL_INFO: dict[str, dict[str, Any]] = {
-    "pfirrmann": {"type": "multiclass", "num_classes": 5},
-    "modic": {"type": "multiclass", "num_classes": 4},
-    "herniation": {"type": "binary", "num_classes": 1},
-    "bulging": {"type": "binary", "num_classes": 1},
-    "upper_endplate": {"type": "binary", "num_classes": 1},
-    "lower_endplate": {"type": "binary", "num_classes": 1},
-    "spondy": {"type": "binary", "num_classes": 1},
-    "narrowing": {"type": "binary", "num_classes": 1},
-}
 
 
 def construct_3channel(

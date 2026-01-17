@@ -12,16 +12,16 @@ from loguru import logger
 from torch.utils.data import DataLoader
 
 from spine_vision.training.base import BaseTrainer, TrainingConfig, TrainingResult
-from spine_vision.training.datasets.ivd_coords import (
+from spine_vision.training.datasets.localization import (
     IDX_TO_LEVEL,
     NUM_LEVELS,
-    IVDCoordsCollator,
-    IVDCoordsDataset,
+    LocalizationCollator,
+    LocalizationDataset,
 )
 from spine_vision.training.metrics import LocalizationMetrics
 from spine_vision.training.models import CoordinateRegressor
 from spine_vision.training.registry import register_trainer
-from spine_vision.training.visualization import TrainingVisualizer
+from spine_vision.visualization import TrainingVisualizer
 
 
 class LocalizationConfig(TrainingConfig):
@@ -81,7 +81,7 @@ class LocalizationConfig(TrainingConfig):
 
 @register_trainer("localization", config_cls=LocalizationConfig)
 class LocalizationTrainer(
-    BaseTrainer[LocalizationConfig, CoordinateRegressor, IVDCoordsDataset]
+    BaseTrainer[LocalizationConfig, CoordinateRegressor, LocalizationDataset]
 ):
     """Trainer for IVD localization with coordinate regression.
 
@@ -99,8 +99,8 @@ class LocalizationTrainer(
         self,
         config: LocalizationConfig,
         model: CoordinateRegressor | None = None,
-        train_dataset: IVDCoordsDataset | None = None,
-        val_dataset: IVDCoordsDataset | None = None,
+        train_dataset: LocalizationDataset | None = None,
+        val_dataset: LocalizationDataset | None = None,
     ) -> None:
         """Initialize trainer.
 
@@ -123,7 +123,7 @@ class LocalizationTrainer(
 
         # Create datasets if not provided
         if train_dataset is None:
-            train_dataset = IVDCoordsDataset(
+            train_dataset = LocalizationDataset(
                 data_path=config.data_path,
                 split="train",
                 val_ratio=config.val_split,
@@ -135,7 +135,7 @@ class LocalizationTrainer(
             )
 
         if val_dataset is None:
-            val_dataset = IVDCoordsDataset(
+            val_dataset = LocalizationDataset(
                 data_path=config.data_path,
                 split="val",
                 val_ratio=config.val_split,
@@ -166,7 +166,7 @@ class LocalizationTrainer(
 
     def _create_dataloader(
         self,
-        dataset: IVDCoordsDataset,
+        dataset: LocalizationDataset,
         shuffle: bool = True,
     ) -> DataLoader[Any]:
         """Create DataLoader with custom collator."""
@@ -177,11 +177,11 @@ class LocalizationTrainer(
             num_workers=self.config.num_workers,
             pin_memory=self.config.pin_memory,
             drop_last=shuffle,
-            collate_fn=IVDCoordsCollator(),
+            collate_fn=LocalizationCollator(),
         )
 
     def _unpack_batch(self, batch: dict[str, Any]) -> tuple[torch.Tensor, torch.Tensor]:
-        """Unpack batch from IVDCoordsDataset."""
+        """Unpack batch from LocalizationDataset."""
         return batch["image"], batch["coords"]
 
     def _train_step(self, batch: dict[str, Any]) -> float:
@@ -434,7 +434,7 @@ class LocalizationTrainer(
         )
 
     def evaluate(
-        self, test_dataset: IVDCoordsDataset | None = None
+        self, test_dataset: LocalizationDataset | None = None
     ) -> dict[str, float]:
         """Evaluate model on test set.
 
@@ -445,7 +445,7 @@ class LocalizationTrainer(
             Dictionary of evaluation metrics.
         """
         if test_dataset is None:
-            test_dataset = IVDCoordsDataset(
+            test_dataset = LocalizationDataset(
                 data_path=self.config.data_path,
                 split="test",
                 val_ratio=self.config.val_split,

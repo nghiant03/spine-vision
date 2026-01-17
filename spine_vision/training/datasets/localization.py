@@ -1,7 +1,7 @@
-"""IVD Coordinates Dataset for localization training.
+"""Localization Dataset for training.
 
-Loads images and annotations from the IVD coordinates dataset created by
-spine_vision.datasets.ivd_coords.
+Loads images and annotations from the localization dataset created by
+spine_vision.datasets.localization.
 """
 
 import csv
@@ -33,10 +33,10 @@ SERIES_TYPE_TO_IDX = {
 }
 
 
-class IVDCoordsDataset(Dataset[dict[str, Any]]):
-    """Dataset for IVD coordinate localization.
+class LocalizationDataset(Dataset[dict[str, Any]]):
+    """Dataset for coordinate localization.
 
-    Loads images and relative (x, y) coordinates for IVD localization.
+    Loads images and relative (x, y) coordinates for localization.
     Supports filtering by series type, level, and data source.
 
     Annotations CSV format:
@@ -262,8 +262,8 @@ class IVDCoordsDataset(Dataset[dict[str, Any]]):
         }
 
 
-class IVDCoordsCollator:
-    """Custom collator for IVD coordinates dataset.
+class LocalizationCollator:
+    """Custom collator for localization dataset.
 
     Batches samples and handles variable-length metadata.
     """

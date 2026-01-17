@@ -19,7 +19,7 @@ Exports:
     - Base classes: BaseTrainer, BaseModel, TrainingConfig
     - Registries: ModelRegistry, TrainerRegistry, MetricsRegistry
     - Heads: HeadConfig, HeadFactory, create_head
-    - Datasets: IVDCoordsDataset, ClassificationDataset
+    - Datasets: LocalizationDataset, ClassificationDataset
     - Models: ImageClassifier, MultiTaskClassifier, CoordinateRegressor
     - Trainers: LocalizationTrainer, LocalizationConfig, ClassificationTrainer, ClassificationConfig
     - Metrics: LocalizationMetrics, MTLClassificationMetrics
@@ -34,7 +34,7 @@ from spine_vision.training.base import (
 )
 from spine_vision.training.datasets import (
     ClassificationDataset,
-    IVDCoordsDataset,
+    LocalizationDataset,
 )
 from spine_vision.training.heads import (
     BaseHead,
@@ -76,9 +76,10 @@ from spine_vision.training.trainers import (
     LocalizationConfig,
     LocalizationTrainer,
 )
-from spine_vision.training.visualization import (
+from spine_vision.visualization import (
     LABEL_COLORS,
     LABEL_DISPLAY_NAMES,
+    DatasetVisualizer,
     TrainingVisualizer,
     load_classification_original_images,
     load_original_images,
@@ -105,7 +106,7 @@ __all__ = [
     "MultiTaskHead",
     "create_head",
     # Datasets
-    "IVDCoordsDataset",
+    "LocalizationDataset",
     "ClassificationDataset",
     # Models
     "ImageClassifier",
@@ -130,6 +131,7 @@ __all__ = [
     "MTLClassificationMetrics",
     # Visualization
     "TrainingVisualizer",
+    "DatasetVisualizer",
     "LABEL_DISPLAY_NAMES",
     "LABEL_COLORS",
     "load_original_images",

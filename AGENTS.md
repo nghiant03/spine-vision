@@ -3,7 +3,7 @@
 ## Project Overview
 
 Library for lumbar spine MRI dataset creation, model training, and result visualization. The project handles:
-- Dataset creation pipelines (nnUNet format, IVD coordinates, classification datasets)
+- Dataset creation pipelines (nnUNet format, localization, classification datasets)
 - OCR-based extraction of patient information from medical reports (for Phenikaa dataset)
 - Fuzzy matching of patient data across different data sources
 - Model training infrastructure with trackio integration
@@ -38,7 +38,6 @@ uv sync --group dev        # Include dev dependencies (pandas-stubs, plotly-stub
 
 ### CLI Entry Points (after install)
 ```bash
-spine-vision dataset nnunet [OPTIONS]          # Convert datasets to nnU-Net format
 spine-vision dataset localization [OPTIONS]    # Create localization dataset
 spine-vision dataset phenikaa [OPTIONS]        # Preprocess Phenikaa dataset (OCR + matching)
 spine-vision dataset classification [OPTIONS]  # Create classification dataset (Phenikaa + SPIDER)
@@ -46,7 +45,6 @@ spine-vision train localization [OPTIONS]      # Train localization model (ConvN
 spine-vision train classification [OPTIONS]    # Train classification model (ResNet50-MTL)
 spine-vision test [OPTIONS]                    # Test trained models with images/DICOM
 spine-vision evaluate [OPTIONS]                # Evaluate on test set with visualization
-spine-vision analyze [OPTIONS]                 # Analyze classification dataset
 ```
 
 ### Running Scripts Directly
@@ -84,8 +82,7 @@ spine-vision/
 │   ├── datasets/              # Dataset creation pipelines
 │   │   ├── __init__.py
 │   │   ├── labels.py          # LabelSchema, remap_labels, load_label_schema
-│   │   ├── nnunet.py          # nnUNet format conversion
-│   │   ├── ivd_coords.py      # IVD coordinates dataset creation
+│   │   ├── localization.py    # Localization dataset creation
 │   │   ├── classification.py  # Classification dataset (Phenikaa + SPIDER)
 │   │   ├── rsna.py            # RSNA dataset utilities (series mapping)
 │   │   ├── phenikaa/          # Phenikaa dataset preprocessing
@@ -100,10 +97,17 @@ spine-vision/
 │   │   ├── heads.py           # Configurable head architectures
 │   │   ├── metrics.py         # BaseMetrics, LocalizationMetrics, MTLClassificationMetrics
 │   │   ├── registry.py        # ModelRegistry, TrainerRegistry
-│   │   ├── visualization.py   # TrainingVisualizer for curves/predictions
+│   │   ├── visualization/     # Visualization utilities
+│   │   │   ├── __init__.py    # Exports for visualization module
+│   │   │   ├── base.py        # Base utilities and constants
+│   │   │   ├── training.py    # Training curves plotting
+│   │   │   ├── localization.py # Localization prediction visualization
+│   │   │   ├── classification.py # Classification prediction visualization
+│   │   │   ├── dataset.py     # Dataset statistics visualization (Plotly)
+│   │   │   └── visualizer.py  # TrainingVisualizer, DatasetVisualizer classes
 │   │   ├── datasets/          # PyTorch datasets for training
 │   │   │   ├── __init__.py
-│   │   │   ├── ivd_coords.py  # IVDCoordsDataset
+│   │   │   ├── localization.py # LocalizationDataset
 │   │   │   └── classification.py # ClassificationDataset, ClassificationCollator
 │   │   ├── models/            # Model architectures
 │   │   │   ├── __init__.py
@@ -114,8 +118,7 @@ spine-vision/
 │   │       ├── localization.py # LocalizationTrainer, LocalizationConfig
 │   │       └── classification.py # ClassificationTrainer, ClassificationConfig
 │   └── cli/                   # Unified CLI with subcommands
-│       ├── __init__.py        # Main entry point (dataset, train, test, evaluate, analyze)
-│       ├── analyze.py         # Dataset analysis command
+│       ├── __init__.py        # Main entry point (dataset, train, test, evaluate)
 │       ├── evaluate.py        # Model evaluation command
 │       ├── test.py            # Model testing command
 │       └── train.py           # Training command entry point
@@ -161,9 +164,9 @@ arr_uint8 = normalize_to_uint8(float_array)
 ```python
 from spine_vision.datasets import (
     # Base classes
-    BaseProcessor, DatasetConfig, ProcessingResult,
-    # IVD coordinates
-    IVDDatasetConfig, IVDCoordsDatasetProcessor,
+    BaseProcessor, ProcessingResult,
+    # Localization
+    LocalizationDatasetConfig, LocalizationDatasetProcessor,
     # Phenikaa preprocessing
     PreprocessConfig, PhenikkaaProcessor,
     # Classification dataset
@@ -172,11 +175,11 @@ from spine_vision.datasets import (
     load_series_mapping, get_series_type,
 )
 
-# IVD coordinates dataset
-config = IVDDatasetConfig(base_path=Path("data"))
-processor = IVDCoordsDatasetProcessor(config)
+# Localization dataset
+config = LocalizationDatasetConfig(base_path=Path("data"))
+processor = LocalizationDatasetProcessor(config)
 result = processor.process()
-print(f"Created {result.num_samples} IVD annotations at {result.output_path}")
+print(f"Created {result.num_samples} localization annotations at {result.output_path}")
 
 # Phenikaa preprocessing (supports both report formats)
 # - ID-named reports (250010139.png): extracts name/birthday from OCR
@@ -221,7 +224,7 @@ from spine_vision.training import (
     # Base classes
     BaseModel, BaseTrainer, TrainingConfig, TrainingResult,
     # Datasets
-    IVDCoordsDataset, ClassificationDataset, ClassificationCollator,
+    LocalizationDataset, ClassificationDataset,
     # Models
     CoordinateRegressor, MTLClassifier,
     # Trainers
@@ -229,12 +232,12 @@ from spine_vision.training import (
     ClassificationConfig, ClassificationTrainer,
     # Metrics & Visualization
     BaseMetrics, LocalizationMetrics, MTLClassificationMetrics,
-    TrainingVisualizer,
+    TrainingVisualizer, DatasetVisualizer,
 )
 
 # Training localization model
 config = LocalizationConfig(
-    data_path=Path("data/processed/ivd_coords"),
+    data_path=Path("data/processed/localization"),
     model_variant="base",
     batch_size=32,
     num_epochs=100,
@@ -293,7 +296,7 @@ metrics = trainer.evaluate(visualize=True)
 ### spine-vision train localization
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--data-path` | IVD coordinates dataset path | `data/processed/ivd_coords` |
+| `--data-path` | Localization dataset path | `data/processed/localization` |
 | `--model-variant` | ConvNext variant | `base` |
 | `--batch-size` | Training batch size | `32` |
 | `--num-epochs` | Number of training epochs | `100` |

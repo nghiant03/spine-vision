@@ -1,7 +1,6 @@
 """Unified CLI for spine-vision.
 
 Usage:
-    spine-vision dataset nnunet [OPTIONS]          # Convert to nnUNet format
     spine-vision dataset localization [OPTIONS]    # Create localization dataset
     spine-vision dataset phenikaa [OPTIONS]        # Preprocess Phenikaa dataset
     spine-vision dataset classification [OPTIONS]  # Create classification dataset
@@ -9,8 +8,6 @@ Usage:
     spine-vision train classification [OPTIONS]    # Train classification model (MTL)
     spine-vision test [OPTIONS]                    # Test trained models
     spine-vision evaluate [OPTIONS]                # Evaluate on test set with visualization
-    spine-vision analyze [OPTIONS]                 # Analyze classification dataset
-    spine-vision visualize [OPTIONS]               # Visualize segmentation results
 """
 
 import dataclasses
@@ -19,8 +16,6 @@ from typing import Annotated, Union
 import tyro
 from loguru import logger
 
-from spine_vision.cli.analyze import AnalyzeConfig
-from spine_vision.cli.analyze import main as analyze_main
 from spine_vision.cli.evaluate import EvaluateConfig
 from spine_vision.cli.evaluate import main as evaluate_main
 from spine_vision.cli.test import TestConfig
@@ -29,8 +24,8 @@ from spine_vision.cli.train import main as train_main
 from spine_vision.datasets import (
     ClassificationDatasetConfig,
     ClassificationDatasetProcessor,
-    IVDCoordsDatasetProcessor,
-    IVDDatasetConfig,
+    LocalizationDatasetConfig,
+    LocalizationDatasetProcessor,
     PhenikkaaProcessor,
     PreprocessConfig,
 )
@@ -40,11 +35,11 @@ from spine_vision.training.trainers.localization import LocalizationConfig
 DatasetSubcommand = Annotated[
     Union[
         Annotated[
-            IVDDatasetConfig,
+            LocalizationDatasetConfig,
             tyro.conf.subcommand(
                 "localization",
                 prefix_name=False,
-                description="Create localization dataset (IVD coordinates)",
+                description="Create localization dataset",
             ),
         ],
         Annotated[
@@ -122,10 +117,6 @@ Command = Union[
         EvaluateConfig,
         tyro.conf.subcommand("evaluate", description="Evaluate on test set with visualization"),
     ],
-    Annotated[
-        AnalyzeConfig,
-        tyro.conf.subcommand("analyze", description="Analyze classification dataset"),
-    ],
 ]
 
 
@@ -136,8 +127,8 @@ def cli() -> None:
     match config:
         case DatasetCommand(cmd=cmd):
             match cmd:
-                case IVDDatasetConfig():
-                    processor = IVDCoordsDatasetProcessor(cmd)
+                case LocalizationDatasetConfig():
+                    processor = LocalizationDatasetProcessor(cmd)
                     result = processor.process()
                     logger.info(result.summary)
                 case PreprocessConfig():
@@ -158,8 +149,6 @@ def cli() -> None:
             test_main(config)
         case EvaluateConfig():
             evaluate_main(config)
-        case AnalyzeConfig():
-            analyze_main(config)
 
 
 if __name__ == "__main__":

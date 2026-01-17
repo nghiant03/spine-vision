@@ -27,13 +27,13 @@ from spine_vision.datasets.rsna import get_series_type, load_series_mapping
 from spine_vision.io import normalize_to_uint8, write_records_csv
 
 
-class IVDDatasetConfig(BaseConfig):
-    """Configuration for IVD coords dataset creation."""
+class LocalizationDatasetConfig(BaseConfig):
+    """Configuration for localization dataset creation."""
 
     base_path: Path = Path.cwd() / "data"
     """Base data directory."""
 
-    output_name: str = "ivd_coords"
+    output_name: str = "localization"
     """Output dataset folder name."""
 
     include_neural_foraminal: bool = True
@@ -183,7 +183,7 @@ def process_rsna_improved(
     series_desc_path: Path,
     rsna_images_path: Path,
     output_images_path: Path,
-    config: IVDDatasetConfig,
+    config: LocalizationDatasetConfig,
 ) -> list[AnnotationRecord]:
     """Process RSNA improved coordinates.
 
@@ -323,18 +323,18 @@ def log_dataset_summary(records: list[AnnotationRecord]) -> None:
     logger.info("=" * 50)
 
 
-class IVDCoordsDatasetProcessor(BaseProcessor[IVDDatasetConfig]):
-    """Processor for creating IVD coordinates dataset.
+class LocalizationDatasetProcessor(BaseProcessor[LocalizationDatasetConfig]):
+    """Processor for creating localization dataset.
 
     Combines Lumbar Coords pretrain data and RSNA improved coordinates
     for training localization models.
     """
 
-    def __init__(self, config: IVDDatasetConfig) -> None:
+    def __init__(self, config: LocalizationDatasetConfig) -> None:
         """Initialize processor with configuration.
 
         Args:
-            config: IVD coordinates dataset configuration.
+            config: Localization dataset configuration.
         """
         super().__init__(config)
         # Initialize logging
@@ -394,14 +394,14 @@ class IVDCoordsDatasetProcessor(BaseProcessor[IVDDatasetConfig]):
         return result
 
 
-def main(config: IVDDatasetConfig) -> None:
-    """Create combined IVD coordinates dataset.
+def main(config: LocalizationDatasetConfig) -> None:
+    """Create combined localization dataset.
 
-    Convenience wrapper around IVDCoordsDatasetProcessor for backward compatibility.
+    Convenience wrapper around LocalizationDatasetProcessor for backward compatibility.
 
     Args:
         config: Dataset configuration.
     """
-    processor = IVDCoordsDatasetProcessor(config)
+    processor = LocalizationDatasetProcessor(config)
     result = processor.process()
     logger.info(result.summary)

@@ -3,17 +3,20 @@
 Provides PyTorch Dataset implementations for various training tasks.
 """
 
+from spine_vision.datasets.labels import AVAILABLE_LABELS, LABEL_INFO
 from spine_vision.training.datasets.classification import (
-    AVAILABLE_LABELS,
-    LABEL_INFO,
     ClassificationCollator,
     ClassificationDataset,
     DynamicTargets,
 )
-from spine_vision.training.datasets.ivd_coords import IVDCoordsDataset
+from spine_vision.training.datasets.localization import (
+    LocalizationCollator,
+    LocalizationDataset,
+)
 
 __all__ = [
-    "IVDCoordsDataset",
+    "LocalizationDataset",
+    "LocalizationCollator",
     "ClassificationDataset",
     "ClassificationCollator",
     "DynamicTargets",

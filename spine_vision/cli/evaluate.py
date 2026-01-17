@@ -84,13 +84,11 @@ def main(config: EvaluateConfig) -> dict[str, float]:
     """
     import torch
 
-    from spine_vision.training.datasets.classification import (
-        AVAILABLE_LABELS,
-        ClassificationDataset,
-    )
+    from spine_vision.datasets.labels import AVAILABLE_LABELS
+    from spine_vision.training.datasets.classification import ClassificationDataset
     from spine_vision.training.metrics import MTLClassificationMetrics
     from spine_vision.training.models import MultiTaskClassifier, TaskConfig
-    from spine_vision.training.visualization import (
+    from spine_vision.visualization import (
         TrainingVisualizer,
         load_classification_original_images,
     )
