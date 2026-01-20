@@ -5,8 +5,7 @@ Uses timm (PyTorch Image Models) for pretrained backbones.
 
 ## Models
 
-- `ImageClassifier`: Single-task classification with any backbone
-- `MultiTaskClassifier`: Multi-task classification with any backbone
+- `Classifier`: Single-task and multi-task classification with configurable heads
 - `CoordinateRegressor`: Coordinate regression for localization
 
 ## Backbone Options
@@ -22,24 +21,28 @@ Use `list_backbones()` to see all available backbones:
 
 ```python
 from spine_vision.training.models import (
-    ImageClassifier,
-    MultiTaskClassifier,
+    Classifier,
     CoordinateRegressor,
     TaskConfig,
     list_backbones,
 )
 
 # Single-task classifier
-model = ImageClassifier(backbone="resnet50", num_classes=5)
+model = Classifier(
+    backbone="resnet50",
+    tasks=[TaskConfig(name="grade", num_classes=5)],
+)
+output = model(images)  # {"grade": logits}
 
 # Multi-task classifier
-model = MultiTaskClassifier(
+model = Classifier(
     backbone="convnext_base",
     tasks=[
         TaskConfig(name="grade", num_classes=5, task_type="multiclass"),
         TaskConfig(name="herniation", num_classes=1, task_type="binary"),
     ],
 )
+output = model(images)  # {"grade": logits, "herniation": logits}
 
 # Coordinate regressor for localization
 model = CoordinateRegressor(
@@ -60,19 +63,21 @@ from spine_vision.training.models.backbone import (
     BackboneName,
 )
 from spine_vision.training.models.generic import (
+    Classifier,
     CoordinateRegressor,
-    ImageClassifier,
     LUMBAR_SPINE_TASKS,
     MTLTargets,
-    MultiTaskClassifier,
     TaskConfig,
     list_backbones,
 )
 
+# Backward compatibility alias
+MultiTaskClassifier = Classifier
+
 __all__ = [
     # Models
-    "ImageClassifier",
-    "MultiTaskClassifier",
+    "Classifier",
+    "MultiTaskClassifier",  # Backward compatibility alias
     "CoordinateRegressor",
     # Task configuration
     "TaskConfig",

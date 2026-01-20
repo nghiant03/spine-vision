@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Annotated
 
 import tyro
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class BaseConfig(BaseModel):
@@ -12,4 +12,4 @@ class BaseConfig(BaseModel):
     enable_file_log: bool = False
     log_path: Path = Path.cwd() / "logs"
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)

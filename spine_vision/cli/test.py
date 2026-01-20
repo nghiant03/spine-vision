@@ -39,10 +39,10 @@ class TestConfig(BaseConfig):
     # Task configuration
     task: Literal["localization", "classification", "mtl_classification"] = "localization"
     """Task type determines model architecture and output format.
-    
+
     - localization: CoordinateRegressor model
-    - classification: ImageClassifier model
-    - mtl_classification: MultiTaskClassifier model
+    - classification: Classifier model (single-task)
+    - mtl_classification: Classifier model (multi-task)
     """
 
     backbone: str = "convnext_base"
@@ -417,7 +417,7 @@ def main(config: TestConfig) -> dict:
     Returns:
         Formatted inference results.
     """
-    from spine_vision.training.models import CoordinateRegressor, ImageClassifier, MultiTaskClassifier
+    from spine_vision.training.models import Classifier, CoordinateRegressor
 
     setup_logger(verbose=config.verbose)
 
@@ -511,7 +511,7 @@ def main(config: TestConfig) -> dict:
                 )
 
     elif config.task == "mtl_classification":
-        mtl_model = MultiTaskClassifier(
+        mtl_model = Classifier(
             backbone=config.backbone,
             pretrained=False,
         )
@@ -526,9 +526,13 @@ def main(config: TestConfig) -> dict:
         formatted = format_mtl_classification_results(result, config.inputs)
 
     else:
-        model = ImageClassifier(
+        # Single-task classification using Classifier with one task
+        from spine_vision.training.models import TaskConfig
+
+        task_name = "class"
+        model = Classifier(
             backbone=config.backbone,
-            num_classes=config.num_classes,
+            tasks=[TaskConfig(name=task_name, num_classes=config.num_classes)],
             pretrained=False,
         )
         model = _load_checkpoint(model, config)
@@ -538,10 +542,20 @@ def main(config: TestConfig) -> dict:
             images=image_inputs,
             image_size=config.image_size,
             device=config.device,
-            return_probabilities=True,
         )
+
+        # Extract single task results for format_classification_results
+        # Classifier returns dict format, convert to flat arrays
+        single_task_result = {
+            "predictions": result["predictions"][task_name],
+            "probabilities": result["probabilities"][task_name],
+            "images": result["images"],
+            "inference_time_ms": result["inference_time_ms"],
+            "num_images": result["num_images"],
+            "device": result["device"],
+        }
         formatted = format_classification_results(
-            result, config.inputs, config.class_names
+            single_task_result, config.inputs, config.class_names
         )
 
     # Print results

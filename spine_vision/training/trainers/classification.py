@@ -28,7 +28,7 @@ from spine_vision.training.datasets.classification import (
     DynamicTargets,
 )
 from spine_vision.training.metrics import MTLClassificationMetrics
-from spine_vision.training.models import MultiTaskClassifier, TaskConfig
+from spine_vision.training.models import Classifier, TaskConfig
 from spine_vision.training.registry import register_trainer
 from spine_vision.visualization import (
     TrainingVisualizer,
@@ -212,11 +212,11 @@ class ClassificationConfig(TrainingConfig):
 
 @register_trainer("classification", config_cls=ClassificationConfig)
 class ClassificationTrainer(
-    BaseTrainer[ClassificationConfig, MultiTaskClassifier, ClassificationDataset]
+    BaseTrainer[ClassificationConfig, Classifier, ClassificationDataset]
 ):
     """Trainer for multi-task lumbar spine classification.
 
-    Uses MultiTaskClassifier with configurable backbone and 6 classification heads.
+    Uses Classifier with configurable backbone and classification heads.
     Supports dual-modality input (T1 + T2 crops).
 
     Uses training hooks:
@@ -229,7 +229,7 @@ class ClassificationTrainer(
     def __init__(
         self,
         config: ClassificationConfig,
-        model: MultiTaskClassifier | None = None,
+        model: Classifier | None = None,
         train_dataset: ClassificationDataset | None = None,
         val_dataset: ClassificationDataset | None = None,
     ) -> None:
@@ -273,7 +273,7 @@ class ClassificationTrainer(
 
         # Create model if not provided
         if model is None:
-            model = MultiTaskClassifier(
+            model = Classifier(
                 backbone=config.backbone,
                 tasks=tasks,
                 pretrained=config.pretrained,

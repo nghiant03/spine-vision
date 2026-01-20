@@ -1,8 +1,7 @@
 """Generic vision models with configurable backbone and heads.
 
 Provides composable model architectures:
-- ImageClassifier: Single-task classification
-- MultiTaskClassifier: Multi-task classification with multiple heads
+- Classifier: Single-task and multi-task classification with configurable heads
 - CoordinateRegressor: Coordinate regression for localization
 
 All models use:
@@ -11,23 +10,24 @@ All models use:
 - Standard BaseModel interface
 
 Usage:
-    from spine_vision.training.models import ImageClassifier, MultiTaskClassifier
+    from spine_vision.training.models import Classifier, TaskConfig
 
     # Single-task classification
-    model = ImageClassifier(
+    model = Classifier(
         backbone="resnet50",
-        num_classes=5,
-        head_config=HeadConfig(head_type="mlp", hidden_dims=[512]),
+        tasks=[TaskConfig(name="grade", num_classes=5)],
     )
+    output = model(images)  # {"grade": logits}
 
     # Multi-task classification
-    model = MultiTaskClassifier(
+    model = Classifier(
         backbone="convnext_base",
         tasks=[
             TaskConfig(name="grade", num_classes=5, task_type="multiclass"),
             TaskConfig(name="condition", num_classes=1, task_type="binary"),
         ],
     )
+    output = model(images)  # {"grade": logits, "condition": logits}
 """
 
 from dataclasses import dataclass
@@ -126,134 +126,11 @@ class MTLTargets:
 
 
 @register_model("classifier")
-class ImageClassifier(BaseModel):
-    """Generic image classifier with configurable backbone and head.
+class Classifier(BaseModel):
+    """Generic classifier with configurable backbone and task heads.
 
-    Architecture:
-        - Configurable backbone (ResNet, ConvNeXt, ViT, etc.)
-        - Global Average Pooling -> feature_dim
-        - Configurable classification head
-    """
-
-    def __init__(
-        self,
-        backbone: str = "resnet50",
-        num_classes: int = 4,
-        pretrained: bool = True,
-        dropout: float = 0.2,
-        freeze_backbone: bool = False,
-        head_config: HeadConfig | None = None,
-        label_smoothing: float = 0.1,
-    ) -> None:
-        """Initialize ImageClassifier.
-
-        Args:
-            backbone: Backbone name (see BackboneFactory for options).
-            num_classes: Number of output classes.
-            pretrained: Use pretrained weights.
-            dropout: Dropout rate (used if no head_config).
-            freeze_backbone: Freeze backbone weights.
-            head_config: Custom head configuration.
-            label_smoothing: Label smoothing for cross-entropy.
-        """
-        super().__init__()
-
-        self._backbone_name = backbone
-        self._num_classes = num_classes
-        self._pretrained = pretrained
-        self._dropout = dropout
-        self._freeze_backbone = freeze_backbone
-
-        # Create backbone
-        self.backbone, feature_dim = BackboneFactory.create(backbone, pretrained)
-        self._feature_dim = feature_dim
-
-        # Create head
-        if head_config is not None:
-            self.head = create_head(head_config, feature_dim, num_classes)
-        else:
-            self.head = nn.Sequential(
-                nn.LayerNorm(feature_dim),
-                nn.Dropout(dropout),
-                nn.Linear(feature_dim, num_classes),
-            )
-
-        # Loss function
-        self._loss_fn = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-
-        if freeze_backbone:
-            self.freeze_backbone()
-
-        self._is_initialized = True
-
-    @property
-    def name(self) -> str:
-        return f"Classifier-{self._backbone_name}"
-
-    @property
-    def feature_dim(self) -> int:
-        return self._feature_dim
-
-    def forward(self, x: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-        """Forward pass.
-
-        Args:
-            x: Input images [B, C, H, W].
-            **kwargs: Unused, for signature compatibility.
-
-        Returns:
-            Logits [B, num_classes].
-        """
-        features = self.backbone(x)
-        return self.head(features)
-
-    def get_loss(
-        self,
-        predictions: torch.Tensor,
-        targets: torch.Tensor,
-        **kwargs: Any,
-    ) -> torch.Tensor:
-        """Compute cross-entropy loss."""
-        return self._loss_fn(predictions, targets)
-
-    def freeze_backbone(self) -> None:
-        for param in self.backbone.parameters():
-            param.requires_grad = False
-
-    def unfreeze_backbone(self) -> None:
-        for param in self.backbone.parameters():
-            param.requires_grad = True
-
-    def get_features(self, x: torch.Tensor) -> torch.Tensor:
-        """Extract features without head."""
-        return self.backbone(x)
-
-    def test_inference(
-        self,
-        images: Sequence[str | Path | Image.Image | np.ndarray],
-        image_size: tuple[int, int] = (224, 224),
-        device: str | torch.device | None = None,
-        return_probabilities: bool = True,
-    ) -> dict[str, Any]:
-        """Test inference with images."""
-        result = super().test_inference(images, image_size, device)
-
-        logits = result["predictions"]
-        predictions = np.argmax(logits, axis=1)
-
-        result["logits"] = logits
-        result["predictions"] = predictions
-
-        if return_probabilities:
-            exp_logits = np.exp(logits - np.max(logits, axis=1, keepdims=True))
-            result["probabilities"] = exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
-
-        return result
-
-
-@register_model("multi_task_classifier")
-class MultiTaskClassifier(BaseModel):
-    """Generic multi-task classifier with configurable backbone and heads.
+    Supports single-task and multi-task classification with a unified API.
+    Returns dict[str, Tensor] for consistent interface regardless of task count.
 
     Architecture:
         - Configurable backbone (ResNet, ConvNeXt, ViT, etc.)
@@ -265,6 +142,23 @@ class MultiTaskClassifier(BaseModel):
         - binary: BCEWithLogitsLoss (single output)
         - multilabel: BCEWithLogitsLoss (multiple outputs)
         - regression: MSELoss
+
+    Single-task usage:
+        model = Classifier(
+            backbone="resnet50",
+            tasks=[TaskConfig(name="grade", num_classes=5)],
+        )
+        output = model(images)  # {"grade": logits}
+
+    Multi-task usage:
+        model = Classifier(
+            backbone="resnet50",
+            tasks=[
+                TaskConfig(name="grade", num_classes=5, task_type="multiclass"),
+                TaskConfig(name="herniation", num_classes=1, task_type="binary"),
+            ],
+        )
+        output = model(images)  # {"grade": logits, "herniation": logits}
     """
 
     def __init__(
@@ -276,7 +170,7 @@ class MultiTaskClassifier(BaseModel):
         freeze_backbone: bool = False,
         default_head_config: HeadConfig | None = None,
     ) -> None:
-        """Initialize MultiTaskClassifier.
+        """Initialize Classifier.
 
         Args:
             backbone: Backbone name (see BackboneFactory for options).
@@ -351,7 +245,7 @@ class MultiTaskClassifier(BaseModel):
 
     @property
     def name(self) -> str:
-        return f"MTLClassifier-{self._backbone_name}"
+        return f"Classifier-{self._backbone_name}"
 
     @property
     def task_names(self) -> list[str]:

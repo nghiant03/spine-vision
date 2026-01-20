@@ -7,6 +7,8 @@ Uses HuggingFace Accelerate for distributed training and mixed precision,
 with optional Trackio logging.
 """
 
+from __future__ import annotations
+
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field

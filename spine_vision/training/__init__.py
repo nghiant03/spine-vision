@@ -2,7 +2,7 @@
 
 This module provides extensible training infrastructure for various tasks:
 - Localization (landmark detection, coordinate regression)
-- Classification (multi-task lumbar spine grading)
+- Classification (single-task and multi-task lumbar spine grading)
 - Segmentation
 
 Uses HuggingFace Accelerate for distributed training and mixed precision,
@@ -20,7 +20,7 @@ Exports:
     - Registries: ModelRegistry, TrainerRegistry, MetricsRegistry
     - Heads: HeadConfig, HeadFactory, create_head
     - Datasets: LocalizationDataset, ClassificationDataset
-    - Models: ImageClassifier, MultiTaskClassifier, CoordinateRegressor
+    - Models: Classifier, CoordinateRegressor
     - Trainers: LocalizationTrainer, LocalizationConfig, ClassificationTrainer, ClassificationConfig
     - Metrics: LocalizationMetrics, MTLClassificationMetrics
     - Visualization: TrainingVisualizer
@@ -49,16 +49,15 @@ from spine_vision.training.metrics import (
     ClassificationMetrics,
     LocalizationMetrics,
     MTLClassificationMetrics,
-    RegressionMetrics,
 )
 from spine_vision.training.models import (
     BACKBONES,
     BackboneFactory,
+    Classifier,
     CoordinateRegressor,
-    ImageClassifier,
     LUMBAR_SPINE_TASKS,
     MTLTargets,
-    MultiTaskClassifier,
+    MultiTaskClassifier,  # Backward compatibility alias
     TaskConfig,
     list_backbones,
 )
@@ -109,8 +108,8 @@ __all__ = [
     "LocalizationDataset",
     "ClassificationDataset",
     # Models
-    "ImageClassifier",
-    "MultiTaskClassifier",
+    "Classifier",
+    "MultiTaskClassifier",  # Backward compatibility alias
     "CoordinateRegressor",
     "TaskConfig",
     "LUMBAR_SPINE_TASKS",
@@ -127,7 +126,6 @@ __all__ = [
     "BaseMetrics",
     "LocalizationMetrics",
     "ClassificationMetrics",
-    "RegressionMetrics",
     "MTLClassificationMetrics",
     # Visualization
     "TrainingVisualizer",
