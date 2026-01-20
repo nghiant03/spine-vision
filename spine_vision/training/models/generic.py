@@ -419,10 +419,10 @@ class CoordinateRegressor(BaseModel):
     Architecture:
         - Configurable backbone (ResNet, ConvNeXt, ViT, etc.)
         - Global Average Pooling -> feature_dim
-        - Optional level embedding for multi-level localization
-        - Configurable regression head with sigmoid output
+        - Regression head outputting all levels at once
 
-    Output: Normalized coordinates in [0, 1].
+    Output: Normalized coordinates in [0, 1] for all levels.
+    Shape: [B, num_levels, 2] where 2 is (x, y).
     """
 
     def __init__(
@@ -433,21 +433,19 @@ class CoordinateRegressor(BaseModel):
         dropout: float = 0.2,
         freeze_backbone: bool = False,
         head_config: HeadConfig | None = None,
-        num_levels: int = 1,
-        level_embedding_dim: int = 16,
+        num_levels: int = 5,
         loss_type: Literal["mse", "smooth_l1", "huber"] = "smooth_l1",
     ) -> None:
         """Initialize CoordinateRegressor.
 
         Args:
             backbone: Backbone name (see BackboneFactory for options).
-            num_outputs: Number of output coordinates (default 2 for x,y).
+            num_outputs: Number of output coordinates per level (default 2 for x,y).
             pretrained: Use pretrained weights.
             dropout: Dropout rate (used if no head_config).
             freeze_backbone: Freeze backbone weights.
             head_config: Custom head configuration.
-            num_levels: Number of levels for level embedding (1 = no embedding).
-            level_embedding_dim: Dimension of level embedding.
+            num_levels: Number of levels to predict (default 5 for IVD levels).
             loss_type: Loss function type.
         """
         super().__init__()
@@ -464,29 +462,24 @@ class CoordinateRegressor(BaseModel):
         self.backbone, feature_dim = BackboneFactory.create(backbone, pretrained)
         self._feature_dim = feature_dim
 
-        # Level embedding (optional)
-        self.level_embedding: nn.Embedding | None = None
-        if num_levels > 1:
-            self.level_embedding = nn.Embedding(num_levels, level_embedding_dim)
-            head_input_dim = feature_dim + level_embedding_dim
-        else:
-            head_input_dim = feature_dim
+        # Total outputs: num_levels * num_outputs (e.g., 5 levels * 2 coords = 10)
+        total_outputs = num_levels * num_outputs
 
         # Create head
         if head_config is not None:
-            self.head = create_head(head_config, head_input_dim, num_outputs)
+            self.head = create_head(head_config, feature_dim, total_outputs)
         else:
             self.head = nn.Sequential(
-                nn.LayerNorm(head_input_dim),
+                nn.LayerNorm(feature_dim),
                 nn.Dropout(dropout),
-                nn.Linear(head_input_dim, 256),
+                nn.Linear(feature_dim, 256),
                 nn.GELU(),
                 nn.Dropout(dropout / 2),
-                nn.Linear(256, num_outputs),
+                nn.Linear(256, total_outputs),
                 nn.Sigmoid(),
             )
 
-        # Loss function
+        # Loss function (works on flattened or multi-level output)
         if loss_type == "mse":
             self._loss_fn = nn.MSELoss()
         elif loss_type == "smooth_l1":
@@ -509,6 +502,10 @@ class CoordinateRegressor(BaseModel):
     def feature_dim(self) -> int:
         return self._feature_dim
 
+    @property
+    def num_levels(self) -> int:
+        return self._num_levels
+
     def forward(
         self,
         x: torch.Tensor,
@@ -518,28 +515,43 @@ class CoordinateRegressor(BaseModel):
 
         Args:
             x: Input images [B, C, H, W].
-            **kwargs: Optional keyword arguments.
-                level_idx (torch.Tensor | None): Level indices [B] for level embedding.
+            **kwargs: Unused, for signature compatibility.
 
         Returns:
-            Predicted coordinates [B, num_outputs] in [0, 1].
+            Predicted coordinates [B, num_levels, 2] in [0, 1].
         """
         features = self.backbone(x)
-        level_idx = kwargs.get("level_idx")
-
-        if self.level_embedding is not None and level_idx is not None:
-            level_emb = self.level_embedding(level_idx)
-            features = torch.cat([features, level_emb], dim=1)
-
-        return self.head(features)
+        output = self.head(features)  # [B, num_levels * 2]
+        # Reshape to [B, num_levels, 2]
+        return output.view(-1, self._num_levels, self._num_outputs)
 
     def get_loss(
         self,
         predictions: torch.Tensor,
         targets: torch.Tensor,
+        mask: torch.Tensor | None = None,
         **kwargs: Any,
     ) -> torch.Tensor:
-        """Compute regression loss."""
+        """Compute regression loss.
+
+        Args:
+            predictions: Predicted coordinates [B, num_levels, 2].
+            targets: Ground truth coordinates [B, num_levels, 2].
+            mask: Optional mask [B, num_levels] indicating valid targets.
+                  1 = valid, 0 = invalid (will be ignored in loss).
+
+        Returns:
+            Scalar loss value.
+        """
+        if mask is not None:
+            # Expand mask to match coordinate dimensions [B, num_levels, 2]
+            mask_expanded = mask.unsqueeze(-1).expand_as(predictions)
+            # Only compute loss on valid predictions
+            valid_preds = predictions[mask_expanded.bool()]
+            valid_targets = targets[mask_expanded.bool()]
+            if valid_preds.numel() == 0:
+                return torch.tensor(0.0, device=predictions.device)
+            return self._loss_fn(valid_preds, valid_targets)
         return self._loss_fn(predictions, targets)
 
     def freeze_backbone(self) -> None:
@@ -558,9 +570,23 @@ class CoordinateRegressor(BaseModel):
         images: Sequence[str | Path | Image.Image | np.ndarray],
         image_size: tuple[int, int] = (224, 224),
         device: str | torch.device | None = None,
-        level_indices: list[int] | None = None,
     ) -> dict[str, Any]:
-        """Test inference with images."""
+        """Test inference with images.
+
+        Args:
+            images: Input images (paths, PIL images, or numpy arrays).
+            image_size: Target image size (H, W).
+            device: Device to run inference on.
+
+        Returns:
+            Dictionary with:
+                - predictions: Normalized coords [N, num_levels, 2] in [0, 1].
+                - coords_pixel: Pixel coords [N, num_levels, 2].
+                - images: Processed images [N, H, W, 3].
+                - inference_time_ms: Inference time in milliseconds.
+                - num_images: Number of images processed.
+                - device: Device used for inference.
+        """
         import time
 
         from torchvision import transforms
@@ -595,19 +621,16 @@ class CoordinateRegressor(BaseModel):
 
         batch = torch.stack(processed_tensors).to(device)
 
-        level_idx_tensor: torch.Tensor | None = None
-        if level_indices is not None and self.level_embedding is not None:
-            level_idx_tensor = torch.tensor(level_indices, dtype=torch.long, device=device)
-
         self.eval()
         start_time = time.perf_counter()
         with torch.no_grad():
-            predictions = self.forward(batch, level_idx=level_idx_tensor)
+            predictions = self.forward(batch)  # [N, num_levels, 2]
         inference_time_ms = (time.perf_counter() - start_time) * 1000
 
-        predictions_np = predictions.cpu().numpy()
+        predictions_np = predictions.cpu().numpy()  # [N, num_levels, 2]
         h, w = image_size
-        coords_pixel = predictions_np * np.array([w, h])
+        # Scale to pixel coordinates
+        coords_pixel = predictions_np * np.array([w, h])  # Broadcasting: [N, num_levels, 2]
 
         return {
             "predictions": predictions_np,

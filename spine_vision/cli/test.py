@@ -12,8 +12,6 @@ import SimpleITK as sitk
 import torch
 from loguru import logger
 from PIL import Image
-from pydantic import model_validator
-
 from spine_vision.core import BaseConfig, setup_logger
 from spine_vision.io import normalize_to_uint8, read_medical_image
 
@@ -40,7 +38,7 @@ class TestConfig(BaseConfig):
     task: Literal["localization", "classification", "mtl_classification"] = "localization"
     """Task type determines model architecture and output format.
 
-    - localization: CoordinateRegressor model
+    - localization: CoordinateRegressor model (outputs all 5 levels at once)
     - classification: Classifier model (single-task)
     - mtl_classification: Classifier model (multi-task)
     """
@@ -49,17 +47,8 @@ class TestConfig(BaseConfig):
     """Backbone architecture (see BackboneFactory for options)."""
 
     # Localization-specific options
-    level_indices: list[int] | None = None
-    """IVD level indices (0-4) for localization. If not provided, tests all levels."""
-
-    test_all_levels: bool = True
-    """When level_indices is None, test all 5 levels for each input image."""
-
     num_levels: int = 5
-    """Number of IVD levels the model was trained on."""
-
-    use_level_embedding: bool = True
-    """Whether the model uses level embedding."""
+    """Number of IVD levels the model outputs (default 5)."""
 
     # Classification-specific options
     num_classes: int = 4
@@ -81,19 +70,6 @@ class TestConfig(BaseConfig):
 
     visualize: bool = False
     """Generate visualization of predictions."""
-
-    @model_validator(mode="after")
-    def validate_inputs(self) -> "TestConfig":
-        """Validate input configuration."""
-        # Validate level_indices for localization
-        if self.task == "localization":
-            if self.level_indices is not None:
-                if len(self.level_indices) != len(self.inputs):
-                    raise ValueError(
-                        f"level_indices ({len(self.level_indices)}) must match "
-                        f"number of inputs ({len(self.inputs)})"
-                    )
-        return self
 
 
 def _load_checkpoint(model: TModel, config: TestConfig) -> TModel:
@@ -181,64 +157,45 @@ def load_images(paths: list[Path]) -> list[np.ndarray]:
 def format_localization_results(
     result: dict,
     paths: list[Path],
-    level_indices: list[int],
-    all_levels_mode: bool = False,
 ) -> dict:
     """Format localization inference results.
 
     Args:
         result: Raw inference result from model.
-        paths: Input file paths (may be repeated in all_levels_mode).
-        level_indices: Level indices for each prediction.
-        all_levels_mode: If True, results are grouped by original input file.
+            - predictions: [N, num_levels, 2] normalized coords.
+            - coords_pixel: [N, num_levels, 2] pixel coords.
+        paths: Input file paths.
 
     Returns:
-        Formatted result dictionary.
+        Formatted result dictionary with all levels for each image.
     """
-    predictions = result["predictions"]
-    coords_pixel = result["coords_pixel"]
+    predictions = result["predictions"]  # [N, num_levels, 2]
+    coords_pixel = result["coords_pixel"]  # [N, num_levels, 2]
 
     level_names = ["L1/L2", "L2/L3", "L3/L4", "L4/L5", "L5/S1"]
+    num_levels = predictions.shape[1]
 
     formatted: dict = {
         "task": "localization",
-        "num_predictions": len(predictions),
+        "num_images": len(predictions),
+        "num_levels": num_levels,
         "inference_time_ms": result["inference_time_ms"],
         "device": result["device"],
-        "all_levels_mode": all_levels_mode,
         "results": [],
     }
 
-    if all_levels_mode:
-        # Group predictions by original file (5 levels per file)
-        num_levels = 5
-        num_files = len(predictions) // num_levels
-        formatted["num_images"] = num_files
-
-        for file_idx in range(num_files):
-            file_entry = {
-                "file": str(paths[file_idx * num_levels]),
-                "levels": [],
-            }
-            for level_idx in range(num_levels):
-                pred_idx = file_idx * num_levels + level_idx
-                file_entry["levels"].append({
-                    "level": level_names[level_idx],
-                    "prediction_normalized": predictions[pred_idx].tolist(),
-                    "prediction_pixel": coords_pixel[pred_idx].tolist(),
-                })
-            formatted["results"].append(file_entry)
-    else:
-        # Original format: one entry per prediction
-        formatted["num_images"] = len(paths)
-        for i, path in enumerate(paths):
-            entry = {
-                "file": str(path),
-                "level": level_names[level_indices[i]],
-                "prediction_normalized": predictions[i].tolist(),
-                "prediction_pixel": coords_pixel[i].tolist(),
-            }
-            formatted["results"].append(entry)
+    for i, path in enumerate(paths):
+        file_entry: dict = {
+            "file": str(path),
+            "levels": [],
+        }
+        for level_idx in range(num_levels):
+            file_entry["levels"].append({
+                "level": level_names[level_idx] if level_idx < len(level_names) else f"Level_{level_idx}",
+                "prediction_normalized": predictions[i, level_idx].tolist(),
+                "prediction_pixel": coords_pixel[i, level_idx].tolist(),
+            })
+        formatted["results"].append(file_entry)
 
     return formatted
 
@@ -292,19 +249,15 @@ def visualize_localization(
     images: list[np.ndarray],
     coords_pixel: np.ndarray,
     paths: list[Path],
-    level_indices: list[int],
     output_path: Path,
-    all_levels_mode: bool = False,
 ) -> None:
     """Generate visualization for localization predictions.
 
     Args:
-        images: Input images as numpy arrays.
-        coords_pixel: Predicted pixel coordinates [N, 2].
+        images: Input images as numpy arrays [N, H, W, 3].
+        coords_pixel: Predicted pixel coordinates [N, num_levels, 2].
         paths: Input file paths.
-        level_indices: Level indices for each prediction.
         output_path: Output directory for visualizations.
-        all_levels_mode: If True, visualizes all levels on each image.
     """
     import matplotlib.pyplot as plt
 
@@ -312,48 +265,31 @@ def visualize_localization(
     level_names = ["L1/L2", "L2/L3", "L3/L4", "L4/L5", "L5/S1"]
     colors = ["red", "orange", "yellow", "green", "blue"]
 
-    if all_levels_mode:
-        # Visualize all levels on each original image
-        num_levels = 5
-        num_files = len(images) // num_levels
+    num_levels = coords_pixel.shape[1]
 
-        for file_idx in range(num_files):
-            fig, ax = plt.subplots(figsize=(8, 8))
-            # Use the first image of this file (all are the same)
-            img = images[file_idx * num_levels]
-            ax.imshow(img)
+    for i, (img, path) in enumerate(zip(images, paths)):
+        fig, ax = plt.subplots(figsize=(8, 8))
+        ax.imshow(img)
 
-            for level_idx in range(num_levels):
-                pred_idx = file_idx * num_levels + level_idx
-                coords = coords_pixel[pred_idx]
-                ax.scatter(
-                    coords[0], coords[1],
-                    c=colors[level_idx], s=100, marker="x", linewidths=2,
-                    label=level_names[level_idx],
-                )
+        # Plot all levels for this image
+        for level_idx in range(num_levels):
+            coords = coords_pixel[i, level_idx]
+            color = colors[level_idx] if level_idx < len(colors) else "purple"
+            label = level_names[level_idx] if level_idx < len(level_names) else f"Level_{level_idx}"
+            ax.scatter(
+                coords[0], coords[1],
+                c=color, s=100, marker="x", linewidths=2,
+                label=label,
+            )
 
-            ax.legend(loc="upper right")
-            ax.set_title(f"All IVD Levels - {paths[file_idx * num_levels].stem}")
-            ax.axis("off")
+        ax.legend(loc="upper right")
+        ax.set_title(f"IVD Localization - {path.stem}")
+        ax.axis("off")
 
-            out_file = output_path / f"pred_{paths[file_idx * num_levels].stem}_all_levels.png"
-            fig.savefig(out_file, bbox_inches="tight", dpi=150)
-            plt.close(fig)
-            logger.info(f"Saved visualization: {out_file}")
-    else:
-        # Original per-image visualization
-        for i, (img, coords) in enumerate(zip(images, coords_pixel)):
-            fig, ax = plt.subplots(figsize=(8, 8))
-            ax.imshow(img)
-            ax.scatter(coords[0], coords[1], c="red", s=100, marker="x", linewidths=2)
-            level_str = f" [{level_names[level_indices[i]]}]" if level_indices else ""
-            ax.set_title(f"Prediction{level_str}: ({coords[0]:.1f}, {coords[1]:.1f})")
-            ax.axis("off")
-
-            out_file = output_path / f"pred_{paths[i].stem}.png"
-            fig.savefig(out_file, bbox_inches="tight", dpi=150)
-            plt.close(fig)
-            logger.info(f"Saved visualization: {out_file}")
+        out_file = output_path / f"pred_{path.stem}.png"
+        fig.savefig(out_file, bbox_inches="tight", dpi=150)
+        plt.close(fig)
+        logger.info(f"Saved visualization: {out_file}")
 
 
 def format_mtl_classification_results(
@@ -436,79 +372,28 @@ def main(config: TestConfig) -> dict:
         model = CoordinateRegressor(
             backbone=config.backbone,
             pretrained=False,
-            num_levels=config.num_levels if config.use_level_embedding else 1,
+            num_levels=config.num_levels,
         )
         model = _load_checkpoint(model, config)
         logger.info(f"Model loaded: {model.name}")
 
-        # Determine if we're testing all levels
-        all_levels_mode = (
-            config.use_level_embedding
-            and config.level_indices is None
-            and config.test_all_levels
+        # Model outputs all levels at once - no need to replicate images
+        result = model.test_inference(
+            images=image_inputs,
+            image_size=config.image_size,
+            device=config.device,
         )
+        formatted = format_localization_results(result, config.inputs)
 
-        if all_levels_mode:
-            # Replicate each image for all 5 levels
-            logger.info("Testing all 5 IVD levels for each input image")
-            expanded_images: list[np.ndarray] = []
-            expanded_paths: list[Path] = []
-            level_indices: list[int] = []
-
-            for img, path in zip(image_inputs, config.inputs):
-                for level_idx in range(5):
-                    expanded_images.append(img)
-                    expanded_paths.append(path)
-                    level_indices.append(level_idx)
-
-            result = model.test_inference(
-                images=expanded_images,
-                image_size=config.image_size,
-                device=config.device,
-                level_indices=level_indices,
+        # Visualization
+        if config.visualize and config.output_path is not None:
+            processed_images = list(result["images"])
+            visualize_localization(
+                processed_images,
+                result["coords_pixel"],
+                config.inputs,
+                config.output_path,
             )
-            formatted = format_localization_results(
-                result, expanded_paths, level_indices, all_levels_mode=True
-            )
-
-            # Visualization with all levels
-            if config.visualize and config.output_path is not None:
-                # Use preprocessed images (resized to image_size) for correct coords
-                processed_images = list(result["images"])
-                visualize_localization(
-                    processed_images,
-                    result["coords_pixel"],
-                    expanded_paths,
-                    level_indices,
-                    config.output_path,
-                    all_levels_mode=True,
-                )
-        else:
-            # Original behavior with specific level indices
-            effective_level_indices = config.level_indices or [0] * len(image_inputs)
-
-            result = model.test_inference(
-                images=image_inputs,
-                image_size=config.image_size,
-                device=config.device,
-                level_indices=effective_level_indices if config.use_level_embedding else None,
-            )
-            formatted = format_localization_results(
-                result, config.inputs, effective_level_indices, all_levels_mode=False
-            )
-
-            # Visualization
-            if config.visualize and config.output_path is not None:
-                # Use preprocessed images (resized to image_size) for correct coords
-                processed_images = list(result["images"])
-                visualize_localization(
-                    processed_images,
-                    result["coords_pixel"],
-                    config.inputs,
-                    effective_level_indices,
-                    config.output_path,
-                    all_levels_mode=False,
-                )
 
     elif config.task == "mtl_classification":
         mtl_model = Classifier(
@@ -563,20 +448,12 @@ def main(config: TestConfig) -> dict:
 
     for entry in formatted["results"]:
         if config.task == "localization":
-            if "levels" in entry:
-                # All-levels mode: grouped by file
-                logger.info(f"  {Path(entry['file']).name}:")
-                for level_entry in entry["levels"]:
-                    logger.info(
-                        f"    {level_entry['level']}: "
-                        f"({level_entry['prediction_pixel'][0]:.1f}, {level_entry['prediction_pixel'][1]:.1f})"
-                    )
-            else:
-                # Single level per entry
-                level_str = f" [{entry.get('level', '')}]" if "level" in entry else ""
+            # All levels output for each file
+            logger.info(f"  {Path(entry['file']).name}:")
+            for level_entry in entry["levels"]:
                 logger.info(
-                    f"  {Path(entry['file']).name}{level_str}: "
-                    f"({entry['prediction_pixel'][0]:.1f}, {entry['prediction_pixel'][1]:.1f})"
+                    f"    {level_entry['level']}: "
+                    f"({level_entry['prediction_pixel'][0]:.1f}, {level_entry['prediction_pixel'][1]:.1f})"
                 )
         elif config.task == "mtl_classification":
             # Multi-task classification output

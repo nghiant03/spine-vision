@@ -128,6 +128,21 @@ class ClassificationRecord(BaseModel):
 # IVD level mapping (index 0-4 corresponds to L1/L2 to L5/S1)
 IVD_LEVEL_NAMES = ["L1/L2", "L2/L3", "L3/L4", "L4/L5", "L5/S1"]
 
+
+def convert_spider_to_phenikaa_level(spider_level: int) -> int:
+    """Convert SPIDER IVD level to Phenikaa convention.
+
+    SPIDER labels discs from L5/S1 to L1/L2 as 1 to 5 (bottom to top).
+    Phenikaa labels discs from L1/L2 to L5/S1 as 1 to 5 (top to bottom).
+
+    Args:
+        spider_level: IVD level in SPIDER format (1=L5/S1, 5=L1/L2).
+
+    Returns:
+        IVD level in Phenikaa format (1=L1/L2, 5=L5/S1).
+    """
+    return 6 - spider_level
+
 def resample_to_isotropic(
     image: sitk.Image,
     new_spacing: tuple[float, float, float] = ISOTROPIC_SPACING,
@@ -560,7 +575,8 @@ def process_spider(
         reader = csv.DictReader(f)
         for row in reader:
             patient_id = int(row["Patient"])
-            ivd_level = int(row["IVD label"])
+            # Convert SPIDER level (1=L5/S1) to Phenikaa level (1=L1/L2)
+            ivd_level = convert_spider_to_phenikaa_level(int(row["IVD label"]))
             if patient_id not in patient_labels:
                 patient_labels[patient_id] = {}
             patient_labels[patient_id][ivd_level] = row
@@ -857,13 +873,14 @@ def recover_spider_annotations(
         logger.warning(f"Cannot recover SPIDER annotations: {labels_path} not found")
         return records
 
-    # Load SPIDER labels
+    # Load SPIDER labels with level conversion to Phenikaa format
     patient_labels: dict[int, dict[int, dict]] = {}
     with open(labels_path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             patient_id = int(row["Patient"])
-            ivd_level = int(row["IVD label"])
+            # Convert SPIDER level (1=L5/S1) to Phenikaa level (1=L1/L2)
+            ivd_level = convert_spider_to_phenikaa_level(int(row["IVD label"]))
             if patient_id not in patient_labels:
                 patient_labels[patient_id] = {}
             patient_labels[patient_id][ivd_level] = row

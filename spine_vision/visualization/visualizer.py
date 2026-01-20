@@ -1,7 +1,9 @@
-"""Main TrainingVisualizer class wrapping all visualization functions.
+"""Visualizer classes for training and dataset analysis.
 
-Provides a unified interface for all visualization capabilities with
-optional trackio logging support.
+Provides a class hierarchy for visualization:
+- BaseVisualizer: Shared configuration and utility methods
+- TrainingVisualizer: Training progress, predictions, and error analysis
+- DatasetVisualizer: Dataset statistics and distributions
 """
 
 from pathlib import Path
@@ -13,7 +15,8 @@ from matplotlib.figure import Figure
 from PIL import Image
 
 from spine_vision.datasets.labels import LABEL_DISPLAY_NAMES
-from spine_vision.visualization.base import extract_prediction_value
+from spine_vision.training.datasets.classification import ClassificationDataset
+from spine_vision.visualization.base import extract_prediction_value, save_figure
 from spine_vision.visualization.classification import (
     plot_classification_metrics,
     plot_classification_predictions,
@@ -24,6 +27,13 @@ from spine_vision.visualization.classification import (
     plot_label_distribution,
     plot_test_samples_with_labels,
 )
+from spine_vision.visualization.dataset import (
+    plot_binary_label_distributions,
+    plot_dataset_statistics,
+    plot_label_cooccurrence,
+    plot_pfirrmann_by_level,
+    plot_samples_per_class,
+)
 from spine_vision.visualization.localization import (
     plot_error_distribution,
     plot_localization_predictions,
@@ -33,15 +43,59 @@ from spine_vision.visualization.localization import (
 from spine_vision.visualization.training import plot_training_curves
 
 
-class TrainingVisualizer:
-    """Visualizer for training progress and validation results.
+class BaseVisualizer:
+    """Base class for all visualizers.
 
-    Generates static plots for training curves, predictions,
-    and error analysis. Optionally logs to trackio.
+    Provides shared configuration and utility methods for visualization classes.
+    Subclasses should implement domain-specific visualization methods.
     """
 
     output_path: Path | None
     output_mode: Literal["browser", "html", "image"]
+
+    def __init__(
+        self,
+        output_path: Path | None = None,
+        output_mode: Literal["browser", "html", "image"] = "image",
+    ) -> None:
+        """Initialize base visualizer.
+
+        Args:
+            output_path: Directory for saving visualizations.
+            output_mode: Output format - 'browser' shows interactively,
+                        'html' and 'image' both save as PNG.
+        """
+        self.output_path = output_path
+        self.output_mode = output_mode
+
+        if output_path:
+            output_path.mkdir(parents=True, exist_ok=True)
+
+    def _save_figure(
+        self,
+        fig: Figure,
+        filename: str,
+        dpi: int = 150,
+    ) -> None:
+        """Save figure using configured output mode.
+
+        Args:
+            fig: Matplotlib figure to save.
+            filename: Output filename (without extension).
+            dpi: Resolution for saved images.
+        """
+        save_figure(fig, self.output_path, filename, self.output_mode, dpi)
+
+
+class TrainingVisualizer(BaseVisualizer):
+    """Visualizer for training progress and validation results.
+
+    Generates static plots for training curves, predictions,
+    and error analysis. Optionally logs to trackio.
+
+    Inherits from BaseVisualizer for shared output configuration.
+    """
+
     use_trackio: bool
     _trackio: Any
 
@@ -59,13 +113,9 @@ class TrainingVisualizer:
                 Note: 'html' saves as PNG since seaborn produces static images.
             use_trackio: If True, also log visualizations to trackio.
         """
-        self.output_path = output_path
-        self.output_mode = output_mode
+        super().__init__(output_path, output_mode)
         self.use_trackio = use_trackio
         self._trackio = None
-
-        if output_path:
-            output_path.mkdir(parents=True, exist_ok=True)
 
         if use_trackio:
             try:
@@ -591,3 +641,100 @@ class TrainingVisualizer:
                             f"distribution/{split}/{label}/class_{cls}_pct": count / total * 100 if total > 0 else 0,
                         })
         return fig
+
+
+class DatasetVisualizer(BaseVisualizer):
+    """Visualizer for dataset statistics and analysis.
+
+    Provides seaborn/matplotlib-based visualizations for:
+    - Dataset statistics (samples by level, source, grades)
+    - Label distributions
+    - Label co-occurrence analysis
+    - Sample images per class
+
+    Inherits from BaseVisualizer for shared output configuration.
+    """
+
+    def plot_dataset_statistics(
+        self, dataset: ClassificationDataset
+    ) -> Figure:
+        """Plot overall dataset statistics."""
+        return plot_dataset_statistics(
+            dataset, self.output_path, self.output_mode
+        )
+
+    def plot_binary_label_distributions(
+        self, dataset: ClassificationDataset
+    ) -> Figure:
+        """Plot distributions for all binary labels."""
+        return plot_binary_label_distributions(
+            dataset, self.output_path, self.output_mode
+        )
+
+    def plot_label_cooccurrence(
+        self, dataset: ClassificationDataset
+    ) -> Figure:
+        """Plot co-occurrence heatmap between binary labels."""
+        return plot_label_cooccurrence(
+            dataset, self.output_path, self.output_mode
+        )
+
+    def plot_pfirrmann_by_level(
+        self, dataset: ClassificationDataset
+    ) -> Figure:
+        """Plot Pfirrmann grade distribution by IVD level."""
+        return plot_pfirrmann_by_level(
+            dataset, self.output_path, self.output_mode
+        )
+
+    def plot_samples_per_class(
+        self,
+        dataset: ClassificationDataset,
+        data_path: Path,
+        samples_per_class: int = 4,
+        display_size: tuple[int, int] = (128, 128),
+    ) -> dict[str, Figure]:
+        """Plot sample images for each possible value of each label."""
+        return plot_samples_per_class(
+            dataset,
+            data_path,
+            self.output_path,
+            self.output_mode,
+            samples_per_class,
+            display_size,
+        )
+
+    def generate_all(
+        self,
+        dataset: ClassificationDataset,
+        data_path: Path,
+        samples_per_class: int = 4,
+        display_size: tuple[int, int] = (128, 128),
+    ) -> None:
+        """Generate all dataset visualizations.
+
+        Args:
+            dataset: Classification dataset to analyze.
+            data_path: Path to dataset directory containing images.
+            samples_per_class: Number of sample images per class value.
+            display_size: Size (H, W) for displayed images.
+        """
+        logger.info("Generating dataset statistics...")
+        self.plot_dataset_statistics(dataset)
+
+        logger.info("Generating binary label distributions...")
+        self.plot_binary_label_distributions(dataset)
+
+        logger.info("Generating label co-occurrence heatmap...")
+        self.plot_label_cooccurrence(dataset)
+
+        logger.info("Generating Pfirrmann by level distribution...")
+        self.plot_pfirrmann_by_level(dataset)
+
+        logger.info("Generating samples per class for each label...")
+        self.plot_samples_per_class(
+            dataset, data_path, samples_per_class, display_size
+        )
+
+        if self.output_path:
+            logger.info(f"All visualizations saved to {self.output_path}")

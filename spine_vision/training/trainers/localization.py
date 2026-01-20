@@ -2,6 +2,8 @@
 
 Specialized trainer for IVD localization with configurable backbone.
 Uses HuggingFace Accelerate and supports trackio logging.
+
+The model outputs all 5 IVD level coordinates in a single forward pass.
 """
 
 from typing import Any, Literal
@@ -46,23 +48,17 @@ class LocalizationConfig(TrainingConfig):
     loss_type: Literal["mse", "smooth_l1", "huber"] = "smooth_l1"
     """Loss function type."""
 
-    use_level_embedding: bool = True
-    """Use level embedding in model."""
-
-    level_embedding_dim: int = 16
-    """Dimension of level embedding."""
+    num_levels: int = NUM_LEVELS
+    """Number of IVD levels to predict (default 5)."""
 
     # Dataset configuration
     series_types: list[str] | None = None
     """Filter to specific series types (e.g., ['sag_t1', 'sag_t2'])."""
 
-    levels: list[str] | None = None
-    """Filter to specific levels (e.g., ['L4/L5', 'L5/S1'])."""
-
     sources: list[str] | None = None
     """Filter to specific sources."""
 
-    image_size: tuple[int, int] = (224, 224)
+    image_size: tuple[int, int] = (512, 512)
     """Target image size (H, W)."""
 
     augment: bool = True
@@ -88,6 +84,9 @@ class LocalizationTrainer(
     Uses HuggingFace Accelerate for distributed training and mixed precision.
     Supports optional trackio logging for experiment tracking.
 
+    The model outputs all 5 IVD level coordinates in a single forward pass,
+    eliminating the need for multiple passes per image.
+
     Uses training hooks instead of overriding the entire train loop:
     - on_train_begin: Log dataset stats
     - on_epoch_begin: Handle backbone unfreezing
@@ -109,16 +108,14 @@ class LocalizationTrainer(
         """
         # Create model if not provided
         if model is None:
-            num_levels = NUM_LEVELS if config.use_level_embedding else 1
             model = CoordinateRegressor(
                 backbone=config.backbone,
                 num_outputs=2,
                 pretrained=config.pretrained,
                 dropout=config.dropout,
                 freeze_backbone=config.freeze_backbone_epochs > 0,
-                num_levels=num_levels,
+                num_levels=config.num_levels,
                 loss_type=config.loss_type,
-                level_embedding_dim=config.level_embedding_dim,
             )
 
         # Create datasets if not provided
@@ -128,7 +125,6 @@ class LocalizationTrainer(
                 split="train",
                 val_ratio=config.val_split,
                 series_types=config.series_types,
-                levels=config.levels,
                 sources=config.sources,
                 image_size=config.image_size,
                 augment=config.augment,
@@ -140,7 +136,6 @@ class LocalizationTrainer(
                 split="val",
                 val_ratio=config.val_split,
                 series_types=config.series_types,
-                levels=config.levels,
                 sources=config.sources,
                 image_size=config.image_size,
                 augment=False,
@@ -157,7 +152,7 @@ class LocalizationTrainer(
         # Visualizer with trackio support - save to logs/
         self.visualizer = TrainingVisualizer(
             output_path=config.logs_path,
-            output_mode="html",
+            output_mode="image",
             use_trackio=config.use_trackio,
         )
 
@@ -185,22 +180,18 @@ class LocalizationTrainer(
         return batch["image"], batch["coords"]
 
     def _train_step(self, batch: dict[str, Any]) -> float:
-        """Training step with level embedding support."""
-        inputs = batch["image"]
-        targets = batch["coords"]
-        level_idx = (
-            batch["level_idx"]
-            if self.config.use_level_embedding
-            else None
-        )
+        """Training step with masked loss for valid levels."""
+        inputs = batch["image"]  # [B, C, H, W]
+        targets = batch["coords"]  # [B, 5, 2]
+        mask = batch["mask"]  # [B, 5]
 
         self.optimizer.zero_grad()
 
         # Accelerator handles mixed precision and device placement
         with self.accelerator.autocast():
-            predictions = self.model(inputs, level_idx)
+            predictions = self.model(inputs)  # [B, 5, 2]
             unwrapped_model = self.accelerator.unwrap_model(self.model)
-            loss = unwrapped_model.get_loss(predictions, targets)
+            loss = unwrapped_model.get_loss(predictions, targets, mask=mask)
 
         self.accelerator.backward(loss)
 
@@ -221,27 +212,22 @@ class LocalizationTrainer(
 
         all_predictions: list[torch.Tensor] = []
         all_targets: list[torch.Tensor] = []
-        all_levels: list[torch.Tensor] = []
+        all_masks: list[torch.Tensor] = []
         all_metadata: list[dict[str, Any]] = []
 
         # For visualization
         sample_images: list[np.ndarray] = []
-        sample_indices: list[int] = []
 
         with torch.no_grad():
-            for batch_idx, batch in enumerate(self.val_loader):  # type: ignore[union-attr]
-                inputs = batch["image"]
-                targets = batch["coords"]
-                level_idx = (
-                    batch["level_idx"]
-                    if self.config.use_level_embedding
-                    else None
-                )
+            for batch in self.val_loader:  # type: ignore[union-attr]
+                inputs = batch["image"]  # [B, C, H, W]
+                targets = batch["coords"]  # [B, 5, 2]
+                mask = batch["mask"]  # [B, 5]
 
                 with self.accelerator.autocast():
-                    predictions = self.model(inputs, level_idx)
+                    predictions = self.model(inputs)  # [B, 5, 2]
                     unwrapped_model = self.accelerator.unwrap_model(self.model)
-                    loss = unwrapped_model.get_loss(predictions, targets)
+                    loss = unwrapped_model.get_loss(predictions, targets, mask=mask)
 
                 total_loss += loss.item()
                 num_batches += 1
@@ -249,11 +235,11 @@ class LocalizationTrainer(
                 # Gather from all processes
                 all_preds: torch.Tensor = self.accelerator.gather(predictions)  # type: ignore[assignment]
                 all_tgts: torch.Tensor = self.accelerator.gather(targets)  # type: ignore[assignment]
-                all_lvls: torch.Tensor = self.accelerator.gather(batch["level_idx"])  # type: ignore[assignment]
+                all_msks: torch.Tensor = self.accelerator.gather(mask)  # type: ignore[assignment]
 
                 all_predictions.append(all_preds.cpu())
                 all_targets.append(all_tgts.cpu())
-                all_levels.append(all_lvls.cpu())
+                all_masks.append(all_msks.cpu())
                 all_metadata.extend(batch["metadata"])
 
                 # Collect samples for visualization (only on main process)
@@ -267,23 +253,24 @@ class LocalizationTrainer(
                     for img in images_np:
                         if len(sample_images) < self.config.num_visualization_samples:
                             sample_images.append(img)
-                            sample_indices.append(
-                                len(all_predictions) * self.config.batch_size
-                                + len(sample_images)
-                                - 1
-                            )
 
         avg_loss = total_loss / num_batches
 
-        # Compute metrics
+        # Concatenate all results: [N, 5, 2] for preds/targets, [N, 5] for masks
         predictions_cat = torch.cat(all_predictions, dim=0)
         targets_cat = torch.cat(all_targets, dim=0)
-        levels_cat = torch.cat(all_levels, dim=0)
+        masks_cat = torch.cat(all_masks, dim=0)
+
+        # Flatten for metrics: extract valid predictions based on mask
+        # Shape: [N, 5, 2] -> [N*5, 2] for valid entries
+        flat_preds, flat_targets, flat_levels = self._flatten_with_mask(
+            predictions_cat, targets_cat, masks_cat
+        )
 
         metrics = self.metrics.compute(
-            predictions_cat.numpy(),
-            targets_cat.numpy(),
-            levels_cat.numpy(),
+            flat_preds,
+            flat_targets,
+            flat_levels,
         )
 
         # Generate visualizations (only on main process)
@@ -293,12 +280,17 @@ class LocalizationTrainer(
             and self.accelerator.is_main_process
         ):
             n_vis = min(len(sample_images), self.config.num_visualization_samples)
-            vis_preds = predictions_cat[:n_vis].numpy()
-            vis_targets = targets_cat[:n_vis].numpy()
-            vis_metadata = all_metadata[:n_vis]
+            # Flatten predictions for visualization: [n_vis, 5, 2] -> [n_vis*5, 2]
+            vis_preds = predictions_cat[:n_vis].numpy().reshape(-1, 2)
+            vis_targets = targets_cat[:n_vis].numpy().reshape(-1, 2)
+            # Repeat metadata for each level
+            vis_metadata = []
+            for meta in all_metadata[:n_vis]:
+                for level_name in IDX_TO_LEVEL.values():
+                    vis_metadata.append({**meta, "level": level_name})
 
             self.visualizer.plot_localization_predictions(
-                sample_images[:n_vis],
+                sample_images[:n_vis] * NUM_LEVELS,  # Repeat images for each level
                 vis_preds,
                 vis_targets,
                 vis_metadata,
@@ -306,6 +298,44 @@ class LocalizationTrainer(
             )
 
         return avg_loss, metrics
+
+    def _flatten_with_mask(
+        self,
+        predictions: torch.Tensor,
+        targets: torch.Tensor,
+        masks: torch.Tensor,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Flatten multi-level predictions using mask.
+
+        Args:
+            predictions: [N, num_levels, 2]
+            targets: [N, num_levels, 2]
+            masks: [N, num_levels] with 1=valid, 0=invalid
+
+        Returns:
+            Tuple of (flat_preds, flat_targets, flat_levels) as numpy arrays.
+            Each has shape [M, 2] where M is total valid entries.
+        """
+        flat_preds = []
+        flat_targets = []
+        flat_levels = []
+
+        masks_np = masks.numpy()
+        preds_np = predictions.numpy()
+        targets_np = targets.numpy()
+
+        for sample_idx in range(len(predictions)):
+            for level_idx in range(NUM_LEVELS):
+                if masks_np[sample_idx, level_idx] > 0:
+                    flat_preds.append(preds_np[sample_idx, level_idx])
+                    flat_targets.append(targets_np[sample_idx, level_idx])
+                    flat_levels.append(level_idx)
+
+        return (
+            np.array(flat_preds),
+            np.array(flat_targets),
+            np.array(flat_levels),
+        )
 
     def _compute_metrics(
         self,
@@ -385,43 +415,43 @@ class LocalizationTrainer(
         # Error distribution on validation set
         if self.val_loader:
             self.model.eval()
-            all_predictions = []
-            all_targets = []
-            all_levels = []
+            all_predictions: list[torch.Tensor] = []
+            all_targets: list[torch.Tensor] = []
+            all_masks: list[torch.Tensor] = []
 
             with torch.no_grad():
                 for batch in self.val_loader:
-                    inputs = batch["image"]
-                    level_idx = (
-                        batch["level_idx"]
-                        if self.config.use_level_embedding
-                        else None
-                    )
-                    predictions = self.model(inputs, level_idx)
+                    inputs = batch["image"]  # [B, C, H, W]
+                    predictions = self.model(inputs)  # [B, 5, 2]
 
                     # Gather from all processes
                     all_preds: torch.Tensor = self.accelerator.gather(predictions)  # type: ignore[assignment]
                     all_tgts: torch.Tensor = self.accelerator.gather(batch["coords"])  # type: ignore[assignment]
-                    all_lvls: torch.Tensor = self.accelerator.gather(batch["level_idx"])  # type: ignore[assignment]
+                    all_msks: torch.Tensor = self.accelerator.gather(batch["mask"])  # type: ignore[assignment]
 
-                    all_predictions.append(all_preds.cpu().numpy())
-                    all_targets.append(all_tgts.cpu().numpy())
-                    all_levels.append(all_lvls.cpu().numpy())
+                    all_predictions.append(all_preds.cpu())
+                    all_targets.append(all_tgts.cpu())
+                    all_masks.append(all_msks.cpu())
 
-            predictions = np.concatenate(all_predictions, axis=0)
-            targets = np.concatenate(all_targets, axis=0)
-            levels = np.concatenate(all_levels, axis=0)
+            predictions_cat = torch.cat(all_predictions, dim=0)
+            targets_cat = torch.cat(all_targets, dim=0)
+            masks_cat = torch.cat(all_masks, dim=0)
+
+            # Flatten for metrics
+            flat_preds, flat_targets, flat_levels = self._flatten_with_mask(
+                predictions_cat, targets_cat, masks_cat
+            )
 
             self.visualizer.plot_error_distribution(
-                predictions,
-                targets,
-                levels,
+                flat_preds,
+                flat_targets,
+                flat_levels,
                 level_names=list(IDX_TO_LEVEL.values()),
                 filename="error_distribution",
             )
 
             # Per-level metrics
-            final_metrics = self.metrics.compute(predictions, targets, levels)
+            final_metrics = self.metrics.compute(flat_preds, flat_targets, flat_levels)
             self.visualizer.plot_per_level_metrics(
                 final_metrics,
                 level_names=list(IDX_TO_LEVEL.values()),
@@ -450,7 +480,6 @@ class LocalizationTrainer(
                 split="test",
                 val_ratio=self.config.val_split,
                 series_types=self.config.series_types,
-                levels=self.config.levels,
                 sources=self.config.sources,
                 image_size=self.config.image_size,
                 augment=False,
@@ -460,34 +489,34 @@ class LocalizationTrainer(
         test_loader = self.accelerator.prepare(test_loader)
 
         self.model.eval()
-        all_predictions = []
-        all_targets = []
-        all_levels = []
+        all_predictions: list[torch.Tensor] = []
+        all_targets: list[torch.Tensor] = []
+        all_masks: list[torch.Tensor] = []
 
         with torch.no_grad():
             for batch in test_loader:
-                inputs = batch["image"]
-                level_idx = (
-                    batch["level_idx"]
-                    if self.config.use_level_embedding
-                    else None
-                )
-                predictions = self.model(inputs, level_idx)
+                inputs = batch["image"]  # [B, C, H, W]
+                predictions = self.model(inputs)  # [B, 5, 2]
 
                 # Gather from all processes
                 all_preds: torch.Tensor = self.accelerator.gather(predictions)  # type: ignore[assignment]
                 all_tgts: torch.Tensor = self.accelerator.gather(batch["coords"])  # type: ignore[assignment]
-                all_lvls: torch.Tensor = self.accelerator.gather(batch["level_idx"])  # type: ignore[assignment]
+                all_msks: torch.Tensor = self.accelerator.gather(batch["mask"])  # type: ignore[assignment]
 
-                all_predictions.append(all_preds.cpu().numpy())
-                all_targets.append(all_tgts.cpu().numpy())
-                all_levels.append(all_lvls.cpu().numpy())
+                all_predictions.append(all_preds.cpu())
+                all_targets.append(all_tgts.cpu())
+                all_masks.append(all_msks.cpu())
 
-        predictions = np.concatenate(all_predictions, axis=0)
-        targets = np.concatenate(all_targets, axis=0)
-        levels = np.concatenate(all_levels, axis=0)
+        predictions_cat = torch.cat(all_predictions, dim=0)
+        targets_cat = torch.cat(all_targets, dim=0)
+        masks_cat = torch.cat(all_masks, dim=0)
 
-        metrics = self.metrics.compute(predictions, targets, levels)
+        # Flatten for metrics
+        flat_preds, flat_targets, flat_levels = self._flatten_with_mask(
+            predictions_cat, targets_cat, masks_cat
+        )
+
+        metrics = self.metrics.compute(flat_preds, flat_targets, flat_levels)
 
         logger.info("Test Results:")
         for key, value in metrics.items():

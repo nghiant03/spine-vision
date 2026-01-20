@@ -192,7 +192,7 @@ def main(config: EvaluateConfig) -> dict[str, float]:
     metrics = MTLClassificationMetrics(target_labels=target_labels)
     visualizer = TrainingVisualizer(
         output_path=output_path,
-        output_mode="html",
+        output_mode="image",
         use_trackio=config.use_trackio,
     )
 

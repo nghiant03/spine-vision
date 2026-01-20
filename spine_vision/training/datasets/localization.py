@@ -2,9 +2,14 @@
 
 Loads images and annotations from the localization dataset created by
 spine_vision.datasets.localization.
+
+The dataset groups all level annotations per image, returning all 5 IVD
+level coordinates in a single sample. This allows the model to predict
+all locations in a single forward pass.
 """
 
 import csv
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal
 
@@ -36,11 +41,18 @@ SERIES_TYPE_TO_IDX = {
 class LocalizationDataset(Dataset[dict[str, Any]]):
     """Dataset for coordinate localization.
 
-    Loads images and relative (x, y) coordinates for localization.
-    Supports filtering by series type, level, and data source.
+    Loads images and relative (x, y) coordinates for all IVD levels.
+    Each sample contains one image with coordinates for all 5 levels.
 
     Annotations CSV format:
         image_path, level, relative_x, relative_y, series_type, source
+
+    Returns per sample:
+        - image: Tensor [C, H, W]
+        - coords: Tensor [5, 2] with coordinates for all levels
+        - mask: Tensor [5] indicating valid levels (1=valid, 0=missing)
+        - series_type_idx: Series type index
+        - metadata: Dict with image_path, source, series_type
     """
 
     def __init__(
@@ -50,7 +62,6 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
         val_ratio: float = 0.15,
         test_ratio: float = 0.05,
         series_types: list[str] | None = None,
-        levels: list[str] | None = None,
         sources: list[str] | None = None,
         image_size: tuple[int, int] = (224, 224),
         augment: bool = True,
@@ -65,7 +76,6 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
             val_ratio: Fraction of data for validation.
             test_ratio: Fraction of data for testing.
             series_types: Filter to specific series types (e.g., ['sag_t1', 'sag_t2']).
-            levels: Filter to specific levels (e.g., ['L4/L5', 'L5/S1']).
             sources: Filter to specific sources (e.g., ['rsna', 'pretrain_spider']).
             image_size: Target image size (H, W).
             augment: Apply data augmentation (for training).
@@ -83,30 +93,32 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
         if not annotations_path.exists():
             raise FileNotFoundError(f"Annotations not found: {annotations_path}")
 
-        self.records = self._load_annotations(annotations_path)
+        raw_records = self._load_annotations(annotations_path)
 
         # Filter by criteria
         if series_types:
-            self.records = [r for r in self.records if r["series_type"] in series_types]
-        if levels:
-            self.records = [r for r in self.records if r["level"] in levels]
+            raw_records = [r for r in raw_records if r["series_type"] in series_types]
         if sources:
-            self.records = [r for r in self.records if r["source"] in sources]
+            raw_records = [r for r in raw_records if r["source"] in sources]
 
-        # Group by unique images for proper splitting
-        unique_images = self._get_unique_images()
+        # Group records by image path
+        self.image_records = self._group_by_image(raw_records)
+
+        # Get unique images and split
+        unique_images = list(self.image_records.keys())
         train_images, val_images, test_images = self._split_images(
             unique_images, val_ratio, test_ratio, seed
         )
 
-        # Filter records by split
+        # Filter by split
         if split == "train":
-            self.records = [r for r in self.records if r["image_path"] in train_images]
+            self.image_list = [img for img in unique_images if img in train_images]
         elif split == "val":
-            self.records = [r for r in self.records if r["image_path"] in val_images]
+            self.image_list = [img for img in unique_images if img in val_images]
         elif split == "test":
-            self.records = [r for r in self.records if r["image_path"] in test_images]
-        # else: keep all
+            self.image_list = [img for img in unique_images if img in test_images]
+        else:
+            self.image_list = unique_images
 
         # Build transforms
         self.transform = self._build_transforms()
@@ -129,9 +141,33 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
                 )
         return records
 
-    def _get_unique_images(self) -> list[str]:
-        """Get list of unique image paths."""
-        return list(set(r["image_path"] for r in self.records))
+    def _group_by_image(
+        self, records: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Group records by image path.
+
+        Returns:
+            Dict mapping image_path to:
+                - coords: Dict[level_idx, (x, y)]
+                - series_type: str
+                - source: str
+        """
+        grouped: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"coords": {}, "series_type": "", "source": ""}
+        )
+
+        for record in records:
+            img_path = record["image_path"]
+            level_idx = LEVEL_TO_IDX.get(record["level"])
+            if level_idx is not None:
+                grouped[img_path]["coords"][level_idx] = (
+                    record["relative_x"],
+                    record["relative_y"],
+                )
+                grouped[img_path]["series_type"] = record["series_type"]
+                grouped[img_path]["source"] = record["source"]
+
+        return dict(grouped)
 
     def _split_images(
         self,
@@ -197,7 +233,7 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
         return transforms.Compose(transform_list)
 
     def __len__(self) -> int:
-        return len(self.records)
+        return len(self.image_list)
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
         """Get a single sample.
@@ -205,28 +241,29 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
         Returns:
             Dictionary with keys:
                 - image: Transformed image tensor [C, H, W]
-                - coords: Coordinates tensor [2] (relative_x, relative_y)
-                - level_idx: Level index (0-4)
+                - coords: Coordinates tensor [5, 2] for all levels
+                - mask: Validity mask [5] (1=valid, 0=missing)
                 - series_type_idx: Series type index
-                - metadata: Dict with image_path, level, source
+                - metadata: Dict with image_path, source, series_type
         """
-        record = self.records[idx]
+        image_path = self.image_list[idx]
+        record = self.image_records[image_path]
 
         # Load image
-        image_path = self.data_path / record["image_path"]
-        image = Image.open(image_path).convert("RGB")
+        full_path = self.data_path / image_path
+        image = Image.open(full_path).convert("RGB")
 
         # Apply transforms
         image_tensor = self.transform(image)
 
-        # Coordinates
-        coords = torch.tensor(
-            [record["relative_x"], record["relative_y"]],
-            dtype=torch.float32,
-        )
+        # Build coordinates array [5, 2] and mask [5]
+        coords = torch.zeros(NUM_LEVELS, 2, dtype=torch.float32)
+        mask = torch.zeros(NUM_LEVELS, dtype=torch.float32)
 
-        # Level encoding
-        level_idx = LEVEL_TO_IDX.get(record["level"], 0)
+        for level_idx, (x, y) in record["coords"].items():
+            coords[level_idx, 0] = x
+            coords[level_idx, 1] = y
+            mask[level_idx] = 1.0
 
         # Series type encoding
         series_type_idx = SERIES_TYPE_TO_IDX.get(record["series_type"], 0)
@@ -234,11 +271,10 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
         return {
             "image": image_tensor,
             "coords": coords,
-            "level_idx": level_idx,
+            "mask": mask,
             "series_type_idx": series_type_idx,
             "metadata": {
-                "image_path": record["image_path"],
-                "level": record["level"],
+                "image_path": image_path,
                 "source": record["source"],
                 "series_type": record["series_type"],
             },
@@ -246,16 +282,30 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
 
     def get_stats(self) -> dict[str, Any]:
         """Get dataset statistics."""
-        levels = [r["level"] for r in self.records]
-        series_types = [r["series_type"] for r in self.records]
-        sources = [r["source"] for r in self.records]
-
         from collections import Counter
 
+        series_types: list[str] = []
+        sources: list[str] = []
+        level_counts: dict[int, int] = defaultdict(int)
+        total_annotations = 0
+
+        for image_path in self.image_list:
+            record = self.image_records[image_path]
+            series_types.append(record["series_type"])
+            sources.append(record["source"])
+            for level_idx in record["coords"]:
+                level_counts[level_idx] += 1
+                total_annotations += 1
+
+        # Convert level counts to level names
+        level_distribution = {
+            IDX_TO_LEVEL[idx]: count for idx, count in sorted(level_counts.items())
+        }
+
         return {
-            "num_samples": len(self.records),
-            "num_unique_images": len(self._get_unique_images()),
-            "levels": dict(Counter(levels)),
+            "num_images": len(self.image_list),
+            "num_annotations": total_annotations,
+            "levels": level_distribution,
             "series_types": dict(Counter(series_types)),
             "sources": dict(Counter(sources)),
             "split": self.split,
@@ -271,8 +321,8 @@ class LocalizationCollator:
     def __call__(self, samples: list[dict[str, Any]]) -> dict[str, Any]:
         """Collate samples into batch."""
         images = torch.stack([s["image"] for s in samples])
-        coords = torch.stack([s["coords"] for s in samples])
-        level_idx = torch.tensor([s["level_idx"] for s in samples], dtype=torch.long)
+        coords = torch.stack([s["coords"] for s in samples])  # [B, 5, 2]
+        mask = torch.stack([s["mask"] for s in samples])  # [B, 5]
         series_type_idx = torch.tensor(
             [s["series_type_idx"] for s in samples], dtype=torch.long
         )
@@ -281,7 +331,7 @@ class LocalizationCollator:
         return {
             "image": images,
             "coords": coords,
-            "level_idx": level_idx,
+            "mask": mask,
             "series_type_idx": series_type_idx,
             "metadata": metadata,
         }

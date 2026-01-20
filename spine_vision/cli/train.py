@@ -104,5 +104,5 @@ def _train_classification(config: ClassificationConfig) -> None:
 
 
 if __name__ == "__main__":
-    config = tyro.cli(LocalizationConfig)
+    config = tyro.cli(LocalizationConfig | ClassificationConfig)
     main(config)

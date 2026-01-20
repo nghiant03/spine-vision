@@ -8,10 +8,9 @@ Provides visualization tools for:
 - Per-level performance breakdown
 - Test sample visualization with labels
 - Classification confusion analysis (TP/TN/FP/FN examples)
-- Dataset statistics and distributions (Plotly-based)
+- Dataset statistics and distributions
 
 Uses matplotlib and seaborn for static visualizations.
-Uses Plotly for interactive dataset visualizations.
 Supports optional trackio logging for experiment tracking.
 """
 
@@ -32,7 +31,6 @@ from spine_vision.visualization.classification import (
     plot_test_samples_with_labels,
 )
 from spine_vision.visualization.dataset import (
-    DatasetVisualizer,
     plot_binary_label_distributions,
     plot_dataset_statistics,
     plot_label_cooccurrence,
@@ -46,7 +44,11 @@ from spine_vision.visualization.localization import (
     visualize_sample,
 )
 from spine_vision.visualization.training import plot_training_curves
-from spine_vision.visualization.visualizer import TrainingVisualizer
+from spine_vision.visualization.visualizer import (
+    BaseVisualizer,
+    DatasetVisualizer,
+    TrainingVisualizer,
+)
 
 __all__ = [
     # Constants
@@ -72,13 +74,14 @@ __all__ = [
     "plot_confusion_examples",
     "plot_confusion_summary",
     "plot_label_distribution",
-    # Dataset visualization (Plotly-based)
-    "DatasetVisualizer",
+    # Dataset visualization
     "plot_dataset_statistics",
     "plot_binary_label_distributions",
     "plot_label_cooccurrence",
     "plot_pfirrmann_by_level",
     "plot_samples_per_class",
-    # Main visualizer class
+    # Visualizer classes
+    "BaseVisualizer",
     "TrainingVisualizer",
+    "DatasetVisualizer",
 ]

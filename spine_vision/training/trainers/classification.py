@@ -292,7 +292,7 @@ class ClassificationTrainer(
         # Visualizer
         self.visualizer = TrainingVisualizer(
             output_path=config.logs_path,
-            output_mode="html",
+            output_mode="image",
             use_trackio=config.use_trackio,
         )
 
