@@ -42,6 +42,7 @@ from PIL import Image
 
 from spine_vision.training.base import BaseModel
 from spine_vision.training.heads import HeadConfig, create_head
+from spine_vision.training.losses import FocalLoss
 from spine_vision.training.models.backbone import BackboneFactory
 from spine_vision.training.registry import register_model
 
@@ -57,10 +58,14 @@ class TaskConfig:
         head_config: Optional custom head configuration.
         loss_weight: Weight for this task's loss in total loss.
         label_smoothing: Label smoothing for cross-entropy (multiclass only).
+        use_focal_loss: Use Focal Loss for binary/multilabel tasks.
+        focal_gamma: Focusing parameter for Focal Loss (default: 2.0).
+        focal_alpha: Optional class weight for Focal Loss (default: None).
 
     Note:
         Class imbalance is handled via weighted sampling in the dataloader,
-        not via loss function weighting.
+        not via loss function weighting. focal_alpha is None by default
+        to avoid "double compensation" with the sampler.
     """
 
     name: str
@@ -69,6 +74,9 @@ class TaskConfig:
     head_config: HeadConfig | None = None
     loss_weight: float = 1.0
     label_smoothing: float = 0.0
+    use_focal_loss: bool = False
+    focal_gamma: float = 2.0
+    focal_alpha: float | None = None
 
 
 # Predefined task configurations for lumbar spine classification
@@ -238,7 +246,13 @@ class Classifier(BaseModel):
                     label_smoothing=task.label_smoothing,
                 )
             elif task.task_type in ("binary", "multilabel"):
-                self._loss_functions[task.name] = nn.BCEWithLogitsLoss()
+                if task.use_focal_loss:
+                    self._loss_functions[task.name] = FocalLoss(
+                        gamma=task.focal_gamma,
+                        alpha=task.focal_alpha,
+                    )
+                else:
+                    self._loss_functions[task.name] = nn.BCEWithLogitsLoss()
             elif task.task_type == "regression":
                 self._loss_functions[task.name] = nn.MSELoss()
             else:

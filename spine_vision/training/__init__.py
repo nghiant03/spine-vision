@@ -44,6 +44,7 @@ from spine_vision.training.heads import (
     MultiTaskHead,
     create_head,
 )
+from spine_vision.training.losses import FocalLoss
 from spine_vision.training.metrics import (
     BaseMetrics,
     ClassificationMetrics,
@@ -103,6 +104,8 @@ __all__ = [
     "MLPHead",
     "MultiTaskHead",
     "create_head",
+    # Losses
+    "FocalLoss",
     # Datasets
     "LocalizationDataset",
     "ClassificationDataset",

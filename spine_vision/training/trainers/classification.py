@@ -85,12 +85,18 @@ _ALL_TASK_CONFIGS: dict[str, TaskConfig] = {
 def _create_lumbar_spine_tasks(
     target_labels: list[str] | None = None,
     label_smoothing: float = 0.1,
+    use_focal_loss: bool = False,
+    focal_gamma: float = 2.0,
+    focal_alpha: float | None = None,
 ) -> list[TaskConfig]:
     """Create lumbar spine classification tasks with optional filtering.
 
     Args:
         target_labels: List of label names to include. If None, includes all labels.
         label_smoothing: Label smoothing for multiclass tasks.
+        use_focal_loss: Use Focal Loss for binary tasks instead of BCE.
+        focal_gamma: Focusing parameter for Focal Loss (default: 2.0).
+        focal_alpha: Optional class weight for Focal Loss (default: None).
 
     Returns:
         List of TaskConfig for the selected lumbar spine classification tasks.
@@ -100,7 +106,8 @@ def _create_lumbar_spine_tasks(
 
     Note:
         Class imbalance is handled via weighted sampling in the dataloader,
-        not via loss function weighting.
+        not via loss function weighting. focal_alpha is None by default
+        to avoid "double compensation" with the sampler.
     """
     # Determine which labels to include
     if target_labels is None:
@@ -125,6 +132,9 @@ def _create_lumbar_spine_tasks(
                 num_classes=base_config.num_classes,
                 task_type=base_config.task_type,
                 label_smoothing=label_smoothing if base_config.task_type == "multiclass" else 0.0,
+                use_focal_loss=use_focal_loss if base_config.task_type == "binary" else False,
+                focal_gamma=focal_gamma,
+                focal_alpha=focal_alpha,
             )
         )
 
@@ -212,6 +222,31 @@ class ClassificationConfig(TrainingConfig):
 
     augment: bool = True
 
+    # Loss configuration
+    use_focal_loss: bool = False
+    """Use Focal Loss for binary tasks instead of BCE.
+
+    Focal loss down-weights well-classified examples and focuses on hard,
+    misclassified examples. This can be useful for imbalanced datasets.
+
+    Note: alpha is set to None by default to avoid "double compensation"
+    when using weighted sampling. Only the gamma parameter is exposed.
+    """
+
+    focal_gamma: float = 2.0
+    """Focusing parameter for Focal Loss.
+
+    Higher values increase focus on hard examples. gamma=0 is equivalent
+    to standard BCE. Default: 2.0 (as recommended in the original paper).
+    """
+
+    focal_alpha: float | None = None
+    """Optional class weight for Focal Loss.
+
+    If None (default), no class weighting is applied. Set to None to avoid
+    "double compensation" when using weighted sampling via use_weighted_sampling.
+    """
+
     # Visualization
     visualize_predictions: bool = True
     num_visualization_samples: int = 16
@@ -283,6 +318,9 @@ class ClassificationTrainer(
         tasks = _create_lumbar_spine_tasks(
             target_labels=config.target_labels,
             label_smoothing=config.label_smoothing,
+            use_focal_loss=config.use_focal_loss,
+            focal_gamma=config.focal_gamma,
+            focal_alpha=config.focal_alpha,
         )
 
         # Create model if not provided
