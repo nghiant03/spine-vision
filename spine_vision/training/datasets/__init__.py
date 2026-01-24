@@ -8,6 +8,7 @@ from spine_vision.training.datasets.classification import (
     ClassificationCollator,
     ClassificationDataset,
     DynamicTargets,
+    create_weighted_sampler,
 )
 from spine_vision.training.datasets.localization import (
     LocalizationCollator,
@@ -20,6 +21,7 @@ __all__ = [
     "ClassificationDataset",
     "ClassificationCollator",
     "DynamicTargets",
+    "create_weighted_sampler",
     "AVAILABLE_LABELS",
     "LABEL_INFO",
 ]

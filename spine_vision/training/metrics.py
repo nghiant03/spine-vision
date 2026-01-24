@@ -4,12 +4,19 @@ Provides metric calculators for different tasks with support for
 per-class breakdown and aggregation.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
+
+from spine_vision.datasets.labels import AVAILABLE_LABELS, LABEL_INFO
+
+if TYPE_CHECKING:
+    from spine_vision.training.models.generic import TaskConfig
 
 
 @dataclass
@@ -311,54 +318,76 @@ class ClassificationMetrics(BaseMetrics):
         return metrics
 
 
-class MTLClassificationMetrics:
-    """Metrics calculator for multi-task classification.
+class ClassifierMetrics:
+    """Metrics calculator for Classifier model.
 
-    Computes metrics for each task head. Supports dynamic label selection.
+    Computes metrics for each task head based on task type from LABEL_INFO:
+    - multiclass: accuracy, balanced accuracy, macro F1
+    - binary: accuracy, precision, recall, F1
 
-    - Multiclass labels (pfirrmann, modic): accuracy, balanced accuracy
-    - Binary labels: accuracy, precision, recall, F1
+    Provides aggregate metrics:
+    - overall_accuracy: mean accuracy across all tasks
+    - macro_f1: mean F1 across all tasks (used for checkpoint selection)
 
     Args:
-        target_labels: List of label names to compute metrics for.
-            If None, computes metrics for all 8 labels.
+        tasks: List of TaskConfig objects from Classifier model.
+        target_labels: List of task names to filter to.
+
+    Example:
+        metrics = ClassifierMetrics(target_labels=["herniation", "pfirrmann"])
+        metrics.update(predictions, targets)
+        result = metrics.compute()
+        # result["macro_f1"] is used for checkpoint selection
     """
 
-    # All available labels with their types
-    _MULTICLASS_LABELS = {"pfirrmann": 5, "modic": 4}
-    _BINARY_LABELS = {
-        "herniation", "bulging", "upper_endplate",
-        "lower_endplate", "spondy", "narrowing"
-    }
-
-    def __init__(self, target_labels: list[str] | None = None) -> None:
-        """Initialize metrics for specified labels.
+    def __init__(
+        self,
+        tasks: list[TaskConfig] | None = None,
+        target_labels: list[str] | None = None,
+    ) -> None:
+        """Initialize metrics for specified tasks.
 
         Args:
-            target_labels: Labels to compute metrics for. If None, uses all labels.
+            tasks: TaskConfig list from Classifier model. If provided, uses task
+                types from these configs. Otherwise uses LABEL_INFO.
+            target_labels: Filter to these task names. If None, uses all labels.
         """
+        # Determine which labels to track
         if target_labels is None:
-            target_labels = list(self._MULTICLASS_LABELS.keys()) + list(self._BINARY_LABELS)
-        self._target_labels = set(target_labels)
+            labels_to_track = list(AVAILABLE_LABELS)
+        else:
+            labels_to_track = list(target_labels)
 
-        # Initialize multiclass metrics only for target labels
+        # Build task type mapping from tasks or LABEL_INFO
+        task_types: dict[str, str] = {}
+        num_classes: dict[str, int] = {}
+
+        if tasks is not None:
+            for task in tasks:
+                if task.name in labels_to_track:
+                    task_types[task.name] = task.task_type
+                    num_classes[task.name] = task.num_classes
+        else:
+            for label in labels_to_track:
+                if label in LABEL_INFO:
+                    task_types[label] = LABEL_INFO[label]["type"]
+                    num_classes[label] = LABEL_INFO[label]["num_classes"]
+
+        self._task_types = task_types
+
+        # Initialize metrics based on task type
         self._multiclass_metrics: dict[str, ClassificationMetrics] = {}
-        if "pfirrmann" in self._target_labels:
-            self._multiclass_metrics["pfirrmann"] = ClassificationMetrics(
-                num_classes=5,
-                class_names=[f"Grade_{i+1}" for i in range(5)],
-            )
-        if "modic" in self._target_labels:
-            self._multiclass_metrics["modic"] = ClassificationMetrics(
-                num_classes=4,
-                class_names=[f"Type_{i}" for i in range(4)],
-            )
-
-        # Initialize binary accumulators only for target labels
         self._binary_preds: dict[str, list[np.ndarray]] = {}
         self._binary_targets: dict[str, list[np.ndarray]] = {}
-        for label in self._BINARY_LABELS:
-            if label in self._target_labels:
+
+        for label, task_type in task_types.items():
+            if task_type == "multiclass":
+                n_classes = num_classes[label]
+                self._multiclass_metrics[label] = ClassificationMetrics(
+                    num_classes=n_classes,
+                    class_names=[f"class_{i}" for i in range(n_classes)],
+                )
+            elif task_type == "binary":
                 self._binary_preds[label] = []
                 self._binary_targets[label] = []
 
@@ -372,8 +401,8 @@ class MTLClassificationMetrics:
 
     def update(
         self,
-        predictions: Any,  # dict[str, Tensor] or DynamicTargets
-        targets: Any,  # dict[str, Tensor] or DynamicTargets
+        predictions: Any,  # dict[str, Tensor] or object with attributes
+        targets: Any,  # dict[str, Tensor] or object with attributes
     ) -> None:
         """Accumulate predictions from a batch.
 
@@ -382,44 +411,60 @@ class MTLClassificationMetrics:
             targets: Dict with task tensors or object with attribute access.
         """
         # Support both dict and object access
-        def get_pred(key: str) -> torch.Tensor | None:
-            if isinstance(predictions, dict):
-                return predictions.get(key)
-            return getattr(predictions, key, None)
+        def get_value(obj: Any, key: str) -> torch.Tensor | None:
+            if isinstance(obj, dict):
+                return obj.get(key)
+            return getattr(obj, key, None)
 
-        def get_target(key: str) -> torch.Tensor | None:
-            if isinstance(targets, dict):
-                return targets.get(key)
-            return getattr(targets, key, None)
-
-        # Multiclass heads
+        # Multiclass tasks
         for label, metrics in self._multiclass_metrics.items():
-            pred = get_pred(label)
-            target = get_target(label)
+            pred = get_value(predictions, label)
+            target = get_value(targets, label)
             if pred is not None and target is not None:
                 pred_classes = pred.argmax(dim=1).cpu().numpy()
                 metrics.update(pred_classes, target.cpu().numpy())
 
-        # Binary heads
+        # Binary tasks
         for label in self._binary_preds:
-            pred = get_pred(label)
-            target = get_target(label)
+            pred = get_value(predictions, label)
+            target = get_value(targets, label)
             if pred is not None and target is not None:
                 self._binary_preds[label].append(
                     torch.sigmoid(pred).cpu().numpy()
                 )
                 self._binary_targets[label].append(target.cpu().numpy())
 
+    @property
+    def is_single_task(self) -> bool:
+        """Check if this is a single-task setup."""
+        return len(self._task_types) == 1
+
     def compute(self) -> dict[str, float]:
-        """Compute all metrics."""
+        """Compute all metrics.
+
+        Returns:
+            Dictionary containing:
+            - {task}_accuracy: Accuracy for each task
+            - {task}_precision, {task}_recall, {task}_f1: For binary tasks
+            - {task}_balanced_acc: For multiclass tasks
+            - overall_accuracy: Mean accuracy across all tasks
+            - f1: F1 score (single-task only, for checkpoint selection)
+            - macro_f1: Mean F1 across tasks (multi-task only, for checkpoint selection)
+        """
         metrics: dict[str, float] = {}
+        f1_scores: list[float] = []
 
         # Multiclass metrics
-        for label, label_metrics in self._multiclass_metrics.items():
-            computed = label_metrics.compute()
+        for label, task_metrics in self._multiclass_metrics.items():
+            computed = task_metrics.compute()
             if computed:
                 metrics[f"{label}_accuracy"] = computed.get("accuracy", 0.0)
-                metrics[f"{label}_balanced_acc"] = computed.get("balanced_accuracy", 0.0)
+                metrics[f"{label}_balanced_acc"] = computed.get(
+                    "balanced_accuracy", 0.0
+                )
+                # Use macro_f1 from ClassificationMetrics for multiclass tasks
+                task_f1 = computed.get("macro_f1", 0.0)
+                f1_scores.append(task_f1)
 
         # Binary metrics
         for label, preds_list in self._binary_preds.items():
@@ -429,7 +474,7 @@ class MTLClassificationMetrics:
             preds = np.concatenate(preds_list, axis=0).flatten()
             targets = np.concatenate(self._binary_targets[label], axis=0).flatten()
 
-            # Binary predictions
+            # Binary predictions at 0.5 threshold
             pred_binary = (preds > 0.5).astype(int)
             t_binary = targets.astype(int)
 
@@ -453,12 +498,22 @@ class MTLClassificationMetrics:
             metrics[f"{label}_precision"] = float(precision)
             metrics[f"{label}_recall"] = float(recall)
             metrics[f"{label}_f1"] = float(f1)
+            f1_scores.append(f1)
 
-        # Overall average accuracy (only for present labels)
+        # Aggregate metrics
         accs = [v for k, v in metrics.items() if k.endswith("_accuracy")]
         if accs:
             metrics["overall_accuracy"] = float(np.mean(accs))
         else:
             metrics["overall_accuracy"] = 0.0
+
+        # F1 metric for checkpoint selection
+        if f1_scores:
+            if self.is_single_task:
+                # Single task: use "f1" directly
+                metrics["f1"] = float(f1_scores[0])
+            else:
+                # Multi-task: use "macro_f1" (average across tasks)
+                metrics["macro_f1"] = float(np.mean(f1_scores))
 
         return metrics

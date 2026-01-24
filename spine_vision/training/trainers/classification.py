@@ -26,8 +26,9 @@ from spine_vision.training.datasets.classification import (
     ClassificationCollator,
     ClassificationDataset,
     DynamicTargets,
+    create_weighted_sampler,
 )
-from spine_vision.training.metrics import MTLClassificationMetrics
+from spine_vision.training.metrics import ClassifierMetrics
 from spine_vision.training.models import Classifier, TaskConfig
 from spine_vision.training.registry import register_trainer
 from spine_vision.visualization import (
@@ -84,23 +85,23 @@ _ALL_TASK_CONFIGS: dict[str, TaskConfig] = {
 def _create_lumbar_spine_tasks(
     target_labels: list[str] | None = None,
     label_smoothing: float = 0.1,
-    class_weights: dict[str, torch.Tensor] | None = None,
 ) -> list[TaskConfig]:
     """Create lumbar spine classification tasks with optional filtering.
 
     Args:
         target_labels: List of label names to include. If None, includes all labels.
         label_smoothing: Label smoothing for multiclass tasks.
-        class_weights: Dict mapping task names to class weight tensors.
 
     Returns:
         List of TaskConfig for the selected lumbar spine classification tasks.
 
     Raises:
         ValueError: If any target_label is not a valid label name.
-    """
-    cw = class_weights or {}
 
+    Note:
+        Class imbalance is handled via weighted sampling in the dataloader,
+        not via loss function weighting.
+    """
     # Determine which labels to include
     if target_labels is None:
         labels_to_use = list(AVAILABLE_LABELS)
@@ -124,7 +125,6 @@ def _create_lumbar_spine_tasks(
                 num_classes=base_config.num_classes,
                 task_type=base_config.task_type,
                 label_smoothing=label_smoothing if base_config.task_type == "multiclass" else 0.0,
-                class_weights=cw.get(base_config.name),
             )
         )
 
@@ -161,8 +161,17 @@ class ClassificationConfig(TrainingConfig):
     dropout: float = 0.3
     freeze_backbone_epochs: int = 0
     label_smoothing: float = 0.1
-    use_class_weights: bool = True
-    """Use class weights for imbalanced data."""
+
+    use_weighted_sampling: bool = True
+    """Use weighted sampling to handle class imbalance."""
+
+    sampler_label: str | None = None
+    """Label to use for computing sample weights in weighted sampling.
+
+    If None, uses the first target label. Only used when use_weighted_sampling=True.
+    For single-task training, this is automatically set to the target label.
+    For multi-task training, you may want to specify which label to balance on.
+    """
 
     # Dataset configuration
     levels: list[str] | None = None
@@ -198,7 +207,7 @@ class ClassificationConfig(TrainingConfig):
         - narrowing: Binary disc narrowing
     """
 
-    output_size: tuple[int, int] = (128, 128)
+    output_size: tuple[int, int] = (256, 256)
     """Final input size to model."""
 
     augment: bool = True
@@ -259,16 +268,21 @@ class ClassificationTrainer(
                 augment=False,
             )
 
-        # Build tasks with class weights from training data
-        class_weights: dict[str, torch.Tensor] | None = None
-        if config.use_class_weights:
-            class_weights = train_dataset.compute_class_weights()
-            logger.info("Using class weights for imbalanced data")
+        # Determine which labels are being trained
+        target_labels = config.target_labels or list(AVAILABLE_LABELS)
 
+        # Create weighted sampler for handling class imbalance
+        self._sampler = None
+        if config.use_weighted_sampling:
+            # Determine which label to use for sampling weights
+            sampler_label = config.sampler_label or target_labels[0]
+            self._sampler = create_weighted_sampler(train_dataset, sampler_label)
+            logger.info(f"Using weighted sampling based on '{sampler_label}' label")
+
+        # Build tasks (no class weights - using weighted sampling instead)
         tasks = _create_lumbar_spine_tasks(
             target_labels=config.target_labels,
             label_smoothing=config.label_smoothing,
-            class_weights=class_weights,
         )
 
         # Create model if not provided
@@ -287,7 +301,7 @@ class ClassificationTrainer(
         self._target_labels = config.target_labels or list(AVAILABLE_LABELS)
 
         # Metrics (only for labels being trained)
-        self.metrics = MTLClassificationMetrics(target_labels=self._target_labels)
+        self.metrics = ClassifierMetrics(target_labels=self._target_labels)
 
         # Visualizer
         self.visualizer = TrainingVisualizer(
@@ -304,21 +318,41 @@ class ClassificationTrainer(
         dataset: ClassificationDataset,
         shuffle: bool = True,
     ) -> DataLoader[Any]:
-        """Create DataLoader with custom collator and deterministic worker seeding."""
+        """Create DataLoader with custom collator and deterministic worker seeding.
+
+        For training (shuffle=True), uses weighted sampler if available for handling
+        class imbalance. The sampler provides randomization, so shuffle is disabled.
+
+        Args:
+            dataset: The dataset to create a dataloader for.
+            shuffle: Whether to shuffle the data. For training, this indicates that
+                the weighted sampler should be used if available.
+
+        Returns:
+            DataLoader configured with appropriate settings.
+        """
         # Create generator for reproducible shuffling
         generator = torch.Generator()
         generator.manual_seed(self.config.seed)
 
+        # Use sampler for training (shuffle=True) if available
+        # Sampler handles class-balanced randomization
+        sampler = self._sampler if shuffle and self._sampler is not None else None
+
+        # When using a sampler, shuffle must be False (sampler handles randomization)
+        effective_shuffle = False if sampler is not None else shuffle
+
         return DataLoader(
             dataset,
             batch_size=self.config.batch_size,
-            shuffle=shuffle,
+            shuffle=effective_shuffle,
+            sampler=sampler,
             num_workers=self.config.num_workers,
             pin_memory=self.config.pin_memory,
-            drop_last=shuffle,
+            drop_last=shuffle,  # Still drop last batch for training
             collate_fn=ClassificationCollator(),
             worker_init_fn=_create_worker_init_fn(self.config.seed),
-            generator=generator,
+            generator=generator if sampler is None else None,  # Generator not used with sampler
         )
 
     def _unpack_batch(
@@ -443,11 +477,17 @@ class ClassificationTrainer(
         val_loss: float | None,
         metrics: dict[str, float],
     ) -> float:
-        """Use macro F1 score for checkpointing (negated for lower-is-better)."""
+        """Use F1 score for checkpointing (negated for lower-is-better).
+
+        Single-task: uses "f1"
+        Multi-task: uses "macro_f1"
+        """
+        # Single-task F1
+        if "f1" in metrics:
+            return -metrics["f1"]
+        # Multi-task macro F1
         if "macro_f1" in metrics:
             return -metrics["macro_f1"]
-        if "overall_accuracy" in metrics:
-            return -metrics["overall_accuracy"]
         if val_loss is not None:
             return val_loss
         return self.history["train_loss"][-1] if self.history["train_loss"] else float("inf")

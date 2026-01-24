@@ -24,7 +24,6 @@ from spine_vision.visualization.classification import (
     plot_classification_metrics,
     plot_classification_predictions,
     plot_confusion_examples,
-    plot_confusion_matrices,
     plot_confusion_matrix_with_samples,
     plot_confusion_summary,
     plot_label_distribution,
@@ -68,7 +67,6 @@ __all__ = [
     # Classification
     "plot_classification_predictions",
     "plot_classification_metrics",
-    "plot_confusion_matrices",
     "plot_confusion_matrix_with_samples",
     "plot_test_samples_with_labels",
     "plot_confusion_examples",

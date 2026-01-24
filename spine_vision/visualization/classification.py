@@ -163,66 +163,6 @@ def plot_classification_metrics(
     return fig
 
 
-def plot_confusion_matrices(
-    confusion_matrices: dict[str, np.ndarray],
-    class_names: dict[str, list[str]] | None = None,
-    output_path: Path | None = None,
-    filename: str = "confusion_matrices",
-    output_mode: Literal["browser", "html", "image"] = "image",
-) -> Figure:
-    """Plot confusion matrices for classification labels.
-
-    Args:
-        confusion_matrices: Dict mapping label names to confusion matrices [C, C].
-        class_names: Dict mapping label names to class name lists.
-        output_path: Directory for saving.
-        filename: Output filename.
-        output_mode: Output format.
-
-    Returns:
-        Matplotlib Figure.
-    """
-    labels = list(confusion_matrices.keys())
-    n_labels = len(labels)
-
-    if n_labels == 0:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        ax.text(0.5, 0.5, "No confusion matrices to plot", ha="center", va="center")
-        ax.axis("off")
-        return fig
-
-    n_cols = min(3, n_labels)
-    n_rows = (n_labels + n_cols - 1) // n_cols
-
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False)
-    axes = axes.flatten()
-
-    for idx, label in enumerate(labels):
-        ax = axes[idx]
-        cm = confusion_matrices[label]
-        n_classes = cm.shape[0]
-
-        # Normalize
-        cm_normalized = cm.astype(float) / np.maximum(cm.sum(axis=1, keepdims=True), 1)
-
-        names = class_names.get(label, [str(i) for i in range(n_classes)]) if class_names else [str(i) for i in range(n_classes)]
-
-        sns.heatmap(cm_normalized, annot=cm, fmt="d", cmap="Blues", ax=ax,
-                    xticklabels=names, yticklabels=names, cbar=idx == 0)
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("True")
-        ax.set_title(LABEL_DISPLAY_NAMES.get(label, label))
-
-    for idx in range(n_labels, len(axes)):
-        axes[idx].axis("off")
-
-    fig.suptitle("Confusion Matrices", fontsize=14, fontweight="bold")
-    plt.tight_layout()
-
-    save_figure(fig, output_path, filename, output_mode)
-    return fig
-
-
 def plot_confusion_matrix_with_samples(
     images: list[np.ndarray],
     predictions: dict[str, np.ndarray],
@@ -302,8 +242,9 @@ def plot_confusion_matrix_with_samples(
     n_rows = 1 + n_cell_rows
 
     # Create figure with gridspec for flexible layout
-    fig = plt.figure(figsize=(max(8, max_samples_per_cell * 2), 3 + n_cell_rows * 2))
-    gs = fig.add_gridspec(n_rows, 1, height_ratios=[2] + [1] * n_cell_rows, hspace=0.3)
+    # Use larger hspace to prevent overlap between "Predicted" label and sample row titles
+    fig = plt.figure(figsize=(max(8, max_samples_per_cell * 2), 3.5 + n_cell_rows * 2))
+    gs = fig.add_gridspec(n_rows, 1, height_ratios=[2.5] + [1] * n_cell_rows, hspace=0.5)
 
     # Confusion matrix heatmap
     ax_cm = fig.add_subplot(gs[0])
@@ -313,6 +254,9 @@ def plot_confusion_matrix_with_samples(
     ax_cm.set_xlabel("Predicted")
     ax_cm.set_ylabel("True")
     ax_cm.set_title(f"{display_name} Confusion Matrix")
+
+    # Collect metadata for displayed samples to write to separate file
+    displayed_samples: list[dict[str, Any]] = []
 
     # Sample images for each cell
     for cell_row_idx, (gt_idx, pred_idx) in enumerate(sorted(non_empty_cells)):
@@ -337,6 +281,20 @@ def plot_confusion_matrix_with_samples(
                 img = ensure_rgb(images[sample_idx])
                 ax.imshow(img)
 
+                # Collect metadata for this displayed sample
+                if metadata and sample_idx < len(metadata):
+                    sample_meta = metadata[sample_idx]
+                    displayed_samples.append({
+                        "row": cell_row_idx,
+                        "col": col_idx,
+                        "gt_class": gt_name,
+                        "pred_class": pred_name,
+                        "status": status,
+                        "source": sample_meta.get("source", ""),
+                        "patient_id": sample_meta.get("patient_id", ""),
+                        "level": sample_meta.get("level", ""),
+                    })
+
                 for spine in ax.spines.values():
                     spine.set_edgecolor(border_color)
                     spine.set_linewidth(2)
@@ -344,14 +302,31 @@ def plot_confusion_matrix_with_samples(
                 ax.set_facecolor("#f0f0f0")
 
             ax.axis("off")
-            if col_idx == 0:
-                n_cell = len(cell_samples[(gt_idx, pred_idx)])
-                ax.set_title(f"GT={gt_name}\u2192Pred={pred_name} ({status}, n={n_cell})", fontsize=9, loc="left")
+
+        # Add row title above the first sample (using figure text for better positioning)
+        n_cell = len(cell_samples[(gt_idx, pred_idx)])
+        row_title = f"GT={gt_name} \u2192 Pred={pred_name} ({status}, n={n_cell})"
+        # Calculate y position for the row title (slightly above the sample row)
+        row_bbox = gs[cell_row_idx + 1].get_position(fig)
+        fig.text(
+            0.02, row_bbox.y1 + 0.01, row_title,
+            fontsize=9, ha="left", va="bottom",
+        )
 
     fig.suptitle(f"Confusion Matrix with Samples - {display_name}", fontsize=12, fontweight="bold")
 
     output_filename = filename or f"confusion_matrix_samples_{target_label}"
     save_figure(fig, output_path, output_filename, output_mode)
+
+    # Write metadata to separate CSV file
+    if output_path and displayed_samples:
+        import csv
+        csv_path = output_path / f"{output_filename}_metadata.csv"
+        with open(csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["row", "col", "gt_class", "pred_class", "status", "source", "patient_id", "level"])
+            writer.writeheader()
+            writer.writerows(displayed_samples)
+
     return fig
 
 

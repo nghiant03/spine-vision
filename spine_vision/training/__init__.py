@@ -22,7 +22,7 @@ Exports:
     - Datasets: LocalizationDataset, ClassificationDataset
     - Models: Classifier, CoordinateRegressor
     - Trainers: LocalizationTrainer, LocalizationConfig, ClassificationTrainer, ClassificationConfig
-    - Metrics: LocalizationMetrics, MTLClassificationMetrics
+    - Metrics: LocalizationMetrics, ClassifierMetrics
     - Visualization: TrainingVisualizer
 """
 
@@ -47,8 +47,8 @@ from spine_vision.training.heads import (
 from spine_vision.training.metrics import (
     BaseMetrics,
     ClassificationMetrics,
+    ClassifierMetrics,
     LocalizationMetrics,
-    MTLClassificationMetrics,
 )
 from spine_vision.training.models import (
     BACKBONES,
@@ -57,7 +57,6 @@ from spine_vision.training.models import (
     CoordinateRegressor,
     LUMBAR_SPINE_TASKS,
     MTLTargets,
-    MultiTaskClassifier,  # Backward compatibility alias
     TaskConfig,
     list_backbones,
 )
@@ -109,7 +108,6 @@ __all__ = [
     "ClassificationDataset",
     # Models
     "Classifier",
-    "MultiTaskClassifier",  # Backward compatibility alias
     "CoordinateRegressor",
     "TaskConfig",
     "LUMBAR_SPINE_TASKS",
@@ -126,7 +124,7 @@ __all__ = [
     "BaseMetrics",
     "LocalizationMetrics",
     "ClassificationMetrics",
-    "MTLClassificationMetrics",
+    "ClassifierMetrics",
     # Visualization
     "TrainingVisualizer",
     "DatasetVisualizer",

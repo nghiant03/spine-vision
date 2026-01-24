@@ -63,7 +63,7 @@ class LocalizationDataset(Dataset[dict[str, Any]]):
         test_ratio: float = 0.05,
         series_types: list[str] | None = None,
         sources: list[str] | None = None,
-        image_size: tuple[int, int] = (224, 224),
+        image_size: tuple[int, int] = (256, 256),
         augment: bool = True,
         normalize: bool = True,
         seed: int = 42,

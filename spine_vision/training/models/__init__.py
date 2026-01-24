@@ -71,13 +71,9 @@ from spine_vision.training.models.generic import (
     list_backbones,
 )
 
-# Backward compatibility alias
-MultiTaskClassifier = Classifier
-
 __all__ = [
     # Models
     "Classifier",
-    "MultiTaskClassifier",  # Backward compatibility alias
     "CoordinateRegressor",
     # Task configuration
     "TaskConfig",

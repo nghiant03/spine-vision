@@ -21,7 +21,6 @@ from spine_vision.visualization.classification import (
     plot_classification_metrics,
     plot_classification_predictions,
     plot_confusion_examples,
-    plot_confusion_matrices,
     plot_confusion_matrix_with_samples,
     plot_confusion_summary,
     plot_label_distribution,
@@ -414,25 +413,6 @@ class TrainingVisualizer(BaseVisualizer):
         )
         if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
             self._trackio.log({f"metrics/{k}": v for k, v in metrics.items()})
-        return fig
-
-    def plot_confusion_matrices(
-        self,
-        confusion_matrices: dict[str, np.ndarray],
-        class_names: dict[str, list[str]] | None = None,
-        filename: str = "confusion_matrices",
-        log_to_trackio: bool | None = None,
-    ) -> Figure:
-        """Plot confusion matrices for classification labels."""
-        fig = plot_confusion_matrices(
-            confusion_matrices=confusion_matrices,
-            class_names=class_names,
-            output_path=self.output_path,
-            filename=filename,
-            output_mode=self.output_mode,
-        )
-        if self._should_log_to_trackio(log_to_trackio):
-            self._log_figure_to_trackio(fig, filename)
         return fig
 
     def plot_confusion_matrix_with_samples(

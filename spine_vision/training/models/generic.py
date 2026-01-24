@@ -57,7 +57,10 @@ class TaskConfig:
         head_config: Optional custom head configuration.
         loss_weight: Weight for this task's loss in total loss.
         label_smoothing: Label smoothing for cross-entropy (multiclass only).
-        class_weights: Optional class weights for imbalanced data.
+
+    Note:
+        Class imbalance is handled via weighted sampling in the dataloader,
+        not via loss function weighting.
     """
 
     name: str
@@ -66,7 +69,6 @@ class TaskConfig:
     head_config: HeadConfig | None = None
     loss_weight: float = 1.0
     label_smoothing: float = 0.0
-    class_weights: torch.Tensor | None = None
 
 
 # Predefined task configurations for lumbar spine classification
@@ -222,22 +224,21 @@ class Classifier(BaseModel):
         self._is_initialized = True
 
     def _init_loss_functions(self, tasks: list[TaskConfig]) -> None:
-        """Initialize loss functions for each task."""
+        """Initialize loss functions for each task.
+
+        Note: Class imbalance is handled via weighted sampling in the dataloader,
+        not via loss function weighting. This simplifies the loss computation and
+        provides more stable training dynamics.
+        """
         for task in tasks:
             self._loss_weights[task.name] = task.loss_weight
 
             if task.task_type == "multiclass":
                 self._loss_functions[task.name] = nn.CrossEntropyLoss(
-                    weight=task.class_weights,
                     label_smoothing=task.label_smoothing,
                 )
             elif task.task_type in ("binary", "multilabel"):
-                if task.class_weights is not None:
-                    self._loss_functions[task.name] = nn.BCEWithLogitsLoss(
-                        pos_weight=task.class_weights,
-                    )
-                else:
-                    self._loss_functions[task.name] = nn.BCEWithLogitsLoss()
+                self._loss_functions[task.name] = nn.BCEWithLogitsLoss()
             elif task.task_type == "regression":
                 self._loss_functions[task.name] = nn.MSELoss()
             else:

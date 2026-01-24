@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import cv2
 import numpy as np
 import SimpleITK as sitk
 import torch
@@ -30,6 +31,9 @@ from tqdm.std import TqdmExperimentalWarning
 from spine_vision.core import BaseConfig, add_file_log, setup_logger
 from spine_vision.datasets.base import BaseProcessor, ProcessingResult
 from spine_vision.io import normalize_to_uint8, read_medical_image
+
+# Type alias for crop mode
+CropMode = Literal["horizontal", "rotated"]
 
 # Constants
 ISOTROPIC_SPACING = (0.3, 0.3, 0.3)  # mm - Standard isotropic spacing for resampling
@@ -65,13 +69,19 @@ class ClassificationDatasetConfig(BaseConfig):
     ] = "base"
     """ConvNext variant for localization model."""
 
-    crop_size: tuple[int, int] = (128, 128)
+    crop_size: tuple[int, int] = (256, 256)
     """Output size of cropped IVD regions in pixels (H, W)."""
 
-    crop_delta_mm: tuple[float, float, float, float] = (35.0, 5.0, 20.0, 20.0)
+    crop_delta_mm: tuple[float, float, float, float] = (55, 15, 17.5, 20)
     """Crop region deltas (left, right, top, bottom) in millimeters."""
 
-    image_size: tuple[int, int] = (224, 224)
+    crop_mode: CropMode = "horizontal"
+    """Crop mode: 'horizontal' for axis-aligned crops, 'rotated' for spinal canal-based rotated crops."""
+
+    last_disc_angle_boost: float = 1.0
+    """Multiplier for rotation angle at L5/S1 to account for steep lordosis curvature."""
+
+    image_size: tuple[int, int] = (512, 512)
     """Input image size for localization model (H, W)."""
 
     include_phenikaa: bool = True
@@ -166,7 +176,7 @@ def resample_to_isotropic(
     resampler.SetOutputOrigin(image.GetOrigin())
     resampler.SetTransform(sitk.Transform())
     
-    resampler.SetInterpolator(sitk.sitkBSpline)
+    resampler.SetInterpolator(sitk.sitkLinear)
     
     return resampler.Execute(image)
 
@@ -212,6 +222,51 @@ def get_slice_spacing(image: sitk.Image) -> tuple[float, float]:
     return (spacing[2], spacing[1])
 
 
+def resize_with_padding(
+    image: np.ndarray,
+    target_size: tuple[int, int],
+) -> np.ndarray:
+    """Resize image to target size with letterboxing (no distortion).
+
+    Scales the image so the longest dimension equals the target size,
+    maintains the original aspect ratio, and centers the result on a
+    black (zero-filled) square canvas.
+
+    Args:
+        image: Input 2D grayscale image (H, W), any dtype.
+        target_size: Output size as (height, width).
+
+    Returns:
+        Resized image with padding, shape (target_height, target_width), uint8.
+    """
+    h, w = image.shape[:2]
+    target_h, target_w = target_size
+
+    # Compute scale to fit longest dimension
+    scale = min(target_h / h, target_w / w)
+
+    # New dimensions preserving aspect ratio
+    new_h = int(round(h * scale))
+    new_w = int(round(w * scale))
+
+    # Resize using cv2.INTER_LINEAR
+    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    # Ensure uint8 output
+    if resized.dtype != np.uint8:
+        resized = normalize_to_uint8(resized)
+
+    # Create black canvas and center the resized image
+    canvas = np.zeros((target_h, target_w), dtype=np.uint8)
+
+    y_offset = (target_h - new_h) // 2
+    x_offset = (target_w - new_w) // 2
+
+    canvas[y_offset : y_offset + new_h, x_offset : x_offset + new_w] = resized
+
+    return canvas
+
+
 def mm_to_pixels(
     delta_mm: tuple[float, float, float, float],
     spacing: tuple[float, float],
@@ -235,7 +290,156 @@ def mm_to_pixels(
     )
 
 
-def crop_region(
+def get_rotation_angles(
+    ivd_locations: dict[int, tuple[float, float]],
+    image_shape: tuple[int, int],
+    last_disc_angle_boost: float = 1.0,
+) -> dict[int, float]:
+    """Compute rotation angles using finite difference with quadratic extrapolation.
+
+    For each IVD point, calculates the local tangent direction:
+    - Top point: forward difference to next point
+    - Middle points: central difference (prev to next)
+    - Bottom point: local quadratic extrapolation using last 3 points to capture
+      the steep lordosis curvature at L5-S1
+
+    The quadratic extrapolation fits x = ay² + by + c to the last 3 points and
+    evaluates dx/dy = 2ay + b at the bottom point, providing a more accurate
+    slope estimate than simple backward difference.
+
+    Args:
+        ivd_locations: Dictionary mapping level index to (x, y) normalized coordinates.
+        image_shape: Image shape (H, W) for denormalization.
+
+    Returns:
+        Dictionary mapping level index to rotation angle in degrees.
+        Negative angle means the crop should be rotated to flatten the tilt.
+    """
+    if len(ivd_locations) < 2:
+        return {level: 0.0 for level in ivd_locations}
+
+    h, w = image_shape
+
+    # Convert to pixel coordinates and sort by Y (head-to-feet)
+    points = []
+    for level_idx, (norm_x, norm_y) in ivd_locations.items():
+        px = norm_x * w
+        py = norm_y * h
+        points.append((level_idx, px, py))
+
+    # Sort by Y coordinate (ascending, head to feet)
+    points.sort(key=lambda p: p[2])
+
+    n = len(points)
+    rotation_angles: dict[int, float] = {}
+
+    for i, (level_idx, px, py) in enumerate(points):
+        if i == 0:
+            # First point (top): forward difference to next point
+            _, next_x, next_y = points[i + 1]
+            dx = next_x - px
+            dy = next_y - py
+            dxdy = dx / dy if dy != 0 else 0.0
+        elif i == n - 1:
+            # Last point (bottom): use quadratic extrapolation if we have >= 3 points
+            if n >= 3:
+                # Fit quadratic x = a*y² + b*y + c using last 3 points
+                last_3 = points[-3:]
+                y_vals = np.array([p[2] for p in last_3])
+                x_vals = np.array([p[1] for p in last_3])
+
+                # polyfit returns coefficients [a, b, c] for a*y² + b*y + c
+                coeffs = np.polyfit(y_vals, x_vals, deg=2)
+                a, b, _ = coeffs
+
+                # Derivative: dx/dy = 2*a*y + b, evaluated at bottom point's y
+                dxdy = 2 * a * py + b
+            else:
+                # Fallback: backward difference from previous point
+                _, prev_x, prev_y = points[i - 1]
+                dx = px - prev_x
+                dy = py - prev_y
+                dxdy = dx / dy if dy != 0 else 0.0
+        else:
+            # Middle point: central difference (prev to next)
+            _, prev_x, prev_y = points[i - 1]
+            _, next_x, next_y = points[i + 1]
+            dx = next_x - prev_x
+            dy = next_y - prev_y
+            dxdy = dx / dy if dy != 0 else 0.0
+
+        # Compute angle: θ = arctan(dx/dy) gives angle relative to vertical (y-axis)
+        angle_rad = np.arctan(dxdy)
+        angle_deg = float(np.degrees(angle_rad))
+
+        # Negate to flatten the tilt (rotate opposite to spine curve)
+        # Apply boost to last disc (L5/S1) to account for steep lordosis
+        if i == n - 1:
+            angle_deg *= last_disc_angle_boost
+        rotation_angles[level_idx] = -angle_deg
+
+    return rotation_angles
+
+
+def crop_region_rotated(
+    image: np.ndarray,
+    center_x: float,
+    center_y: float,
+    crop_size: tuple[int, int],
+    crop_delta: tuple[int, int, int, int],
+    rotation_angle: float,
+) -> np.ndarray:
+    """Crop IVD region with rotation alignment.
+
+    Rotates the image around the disc center by the specified angle,
+    then extracts an axis-aligned crop from the rotated image.
+    Uses letterboxing to resize rectangular crops without distortion.
+
+    Args:
+        image: 2D grayscale image.
+        center_x: Relative x coordinate (0-1).
+        center_y: Relative y coordinate (0-1).
+        crop_size: Output crop size in pixels (H, W).
+        crop_delta: Crop deltas (left, right, top, bottom) from center in pixels.
+        rotation_angle: Rotation angle in degrees (negative to flatten spine tilt).
+
+    Returns:
+        Cropped image region resized to crop_size with padding.
+    """
+    h, w = image.shape[:2]
+
+    # Convert normalized coordinates to pixel coordinates
+    cx = int(center_x * w)
+    cy = int(center_y * h)
+
+    left, right, top, bottom = crop_delta
+
+    # Create rotation matrix around the disc center
+    rotation_matrix = cv2.getRotationMatrix2D((cx, cy), rotation_angle, 1.0)
+
+    # Rotate the image with border replication to avoid black corners
+    rotated = cv2.warpAffine(
+        image,
+        rotation_matrix,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE,
+    )
+
+    # Extract axis-aligned crop from rotated image
+    x1 = max(0, cx - left)
+    x2 = min(w, cx + right)
+    y1 = max(0, cy - top)
+    y2 = min(h, cy + bottom)
+
+    crop = rotated[y1:y2, x1:x2]
+    crop_uint8 = normalize_to_uint8(crop)
+
+    # Use letterboxing to avoid distortion
+    return resize_with_padding(crop_uint8, crop_size)
+
+
+def crop_region_horizontal(
     image: np.ndarray,
     center_x: float,
     center_y: float,
@@ -243,6 +447,10 @@ def crop_region(
     crop_delta: tuple[int, int, int, int],
 ) -> np.ndarray:
     """Crop IVD region centered at predicted coordinates using pixel deltas.
+
+    Uses letterboxing to resize rectangular crops to the target size without
+    distortion. The crop is scaled to fit the longest dimension and centered
+    on a black canvas.
 
     Args:
         image: 2D grayscale image.
@@ -252,10 +460,9 @@ def crop_region(
         crop_delta: Crop deltas (left, right, top, bottom) from center in pixels.
 
     Returns:
-        Cropped image region resized to crop_size.
+        Cropped image region resized to crop_size with padding.
     """
     h, w = image.shape[:2]
-    crop_h, crop_w = crop_size
 
     cx = int(center_x * w)
     cy = int(center_y * h)
@@ -270,12 +477,58 @@ def crop_region(
     crop = image[y1:y2, x1:x2]
     crop_uint8 = normalize_to_uint8(crop)
 
-    if crop_uint8.shape[0] != crop_h or crop_uint8.shape[1] != crop_w:
-        pil_crop = Image.fromarray(crop_uint8)
-        pil_crop = pil_crop.resize((crop_w, crop_h), Image.Resampling.BILINEAR)
-        crop_uint8 = np.array(pil_crop)
+    # Use letterboxing to avoid distortion
+    return resize_with_padding(crop_uint8, crop_size)
 
-    return crop_uint8
+
+@dataclass
+class CropContext:
+    """Context for IVD cropping operations."""
+
+    image: np.ndarray
+    ivd_locations: dict[int, tuple[float, float]]
+    crop_size: tuple[int, int]
+    crop_delta_px: tuple[int, int, int, int]
+    mode: CropMode
+    last_disc_angle_boost: float = 1.0
+    rotation_angles: dict[int, float] | None = None
+
+    def __post_init__(self) -> None:
+        """Compute rotation angles if using rotated mode."""
+        if self.mode == "rotated" and self.rotation_angles is None:
+            h, w = self.image.shape[:2]
+            self.rotation_angles = get_rotation_angles(
+                self.ivd_locations, (h, w), self.last_disc_angle_boost
+            )
+
+    def crop(self, level_idx: int) -> np.ndarray | None:
+        """Crop IVD region for a given level.
+
+        Args:
+            level_idx: IVD level index (0-4).
+
+        Returns:
+            Cropped image or None if level not found.
+        """
+        if level_idx not in self.ivd_locations:
+            return None
+
+        center_x, center_y = self.ivd_locations[level_idx]
+
+        if self.mode == "rotated" and self.rotation_angles:
+            rotation_angle = self.rotation_angles.get(level_idx, 0.0)
+            return crop_region_rotated(
+                self.image,
+                center_x,
+                center_y,
+                self.crop_size,
+                self.crop_delta_px,
+                rotation_angle,
+            )
+
+        return crop_region_horizontal(
+            self.image, center_x, center_y, self.crop_size, self.crop_delta_px
+        )
 
 def load_localization_model(
     model_path: Path,
@@ -336,13 +589,14 @@ def predict_ivd_locations(
     pil_img = Image.fromarray(normalize_to_uint8(image)).convert("RGB")
     tensor = transform(pil_img).unsqueeze(0).to(device)
 
-    predictions = {}
     with torch.no_grad():
-        for level_idx in range(5):
-            level_tensor = torch.tensor([level_idx], device=device)
-            pred = model(tensor, level_idx=level_tensor)
-            pred_np = pred.cpu().numpy()[0]
-            predictions[level_idx] = (float(pred_np[0]), float(pred_np[1]))
+        output = model(tensor)  # [1, num_levels, 2]
+        output_np = output.cpu().numpy()[0]  # [num_levels, 2]
+
+    predictions = {
+        level_idx: (float(output_np[level_idx, 0]), float(output_np[level_idx, 1]))
+        for level_idx in range(output_np.shape[0])
+    }
 
     return predictions
 
@@ -516,18 +770,23 @@ def process_phenikaa(
                 # Compute crop delta in pixels from mm values
                 crop_delta_px = mm_to_pixels(config.crop_delta_mm, spacing_2d)
 
+                # Create crop context for this image
+                crop_ctx = CropContext(
+                    image=middle_slice,
+                    ivd_locations=ivd_locations,
+                    crop_size=config.crop_size,
+                    crop_delta_px=crop_delta_px,
+                    mode=config.crop_mode,
+                    last_disc_angle_boost=config.last_disc_angle_boost,
+                )
+
                 for ivd_level, label_row in levels_to_process.items():
                     level_idx = ivd_level - 1
-                    if level_idx not in ivd_locations:
+                    crop = crop_ctx.crop(level_idx)
+                    if crop is None:
                         continue
 
                     output_filename = f"phenikaa_{patient_id}_{series_type}_L{ivd_level}.png"
-                    center_x, center_y = ivd_locations[level_idx]
-
-                    crop = crop_region(
-                        middle_slice, center_x, center_y, config.crop_size, crop_delta_px
-                    )
-
                     output_path = output_images_path / output_filename
                     Image.fromarray(crop).save(output_path)
 
@@ -630,22 +889,25 @@ def process_spider(
             # Compute crop delta in pixels from mm values
             crop_delta_px = mm_to_pixels(config.crop_delta_mm, spacing_2d)
 
+            # Create crop context for this image
+            crop_ctx = CropContext(
+                image=middle_slice,
+                ivd_locations=ivd_locations,
+                crop_size=config.crop_size,
+                crop_delta_px=crop_delta_px,
+                mode=config.crop_mode,
+                last_disc_angle_boost=config.last_disc_angle_boost,
+            )
+
             for ivd_level, label_row in levels_to_process.items():
                 level_idx = ivd_level - 1
-                if level_idx not in ivd_locations:
+                crop = crop_ctx.crop(level_idx)
+                if crop is None:
                     continue
 
                 output_filename = f"spider_{patient_id}_{series_type}_L{ivd_level}.png"
-                center_x, center_y = ivd_locations[level_idx]
-
-                crop = crop_region(
-                    middle_slice, center_x, center_y, config.crop_size, crop_delta_px
-                )
-                crop_uint8 = normalize_to_uint8(crop)
-
                 output_path = output_images_path / output_filename
-
-                Image.fromarray(crop_uint8).save(output_path)
+                Image.fromarray(crop).save(output_path)
 
                 records.append(
                     ClassificationRecord(

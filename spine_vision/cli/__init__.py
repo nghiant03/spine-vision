@@ -16,8 +16,6 @@ from typing import Annotated, Union
 import tyro
 from loguru import logger
 
-from spine_vision.cli.evaluate import EvaluateConfig
-from spine_vision.cli.evaluate import main as evaluate_main
 from spine_vision.cli.test import TestConfig
 from spine_vision.cli.test import main as test_main
 from spine_vision.cli.train import main as train_main
@@ -113,10 +111,6 @@ Command = Union[
         TestConfig,
         tyro.conf.subcommand("test", description="Test trained models with images or DICOM"),
     ],
-    Annotated[
-        EvaluateConfig,
-        tyro.conf.subcommand("evaluate", description="Evaluate on test set with visualization"),
-    ],
 ]
 
 
@@ -147,8 +141,6 @@ def cli() -> None:
                     train_main(cmd)
         case TestConfig():
             test_main(config)
-        case EvaluateConfig():
-            evaluate_main(config)
 
 
 if __name__ == "__main__":
