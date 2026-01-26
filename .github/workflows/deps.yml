@@ -49,7 +49,8 @@ jobs:
             --max-bacon 3 \
             --cluster \
             --rankdir LR \
-            --rmprefix spine_vision
+            --rmprefix "spine_vision." \
+            --max-module-depth 2
         continue-on-error: true
 
       - name: Commit and push if changed
