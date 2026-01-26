@@ -4,7 +4,7 @@
 import tyro
 from loguru import logger
 
-from spine_vision.core.logging import setup_logger, add_file_log
+from spine_vision.core.logging import add_file_log, setup_logger
 from spine_vision.training.trainers.classification import (
     ClassificationConfig,
     ClassificationTrainer,
@@ -70,7 +70,7 @@ def _train_localization(config: LocalizationConfig) -> None:
 def _train_classification(config: ClassificationConfig) -> None:
     """Run classification training."""
     logger.info("=" * 50)
-    logger.info("Starting Multi-Task Classification Training")
+    logger.info("Starting Classification Training")
     logger.info("=" * 50)
     logger.info(f"Data path: {config.data_path}")
     logger.info(f"Output path: {config.output_path}")

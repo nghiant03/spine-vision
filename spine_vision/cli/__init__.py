@@ -19,11 +19,11 @@ from loguru import logger
 from spine_vision.cli.train import main as train_main
 from spine_vision.datasets import (
     ClassificationDatasetConfig,
-    ClassificationDatasetProcessor,
     LocalizationDatasetConfig,
-    LocalizationDatasetProcessor,
-    PhenikkaaProcessor,
     PreprocessConfig,
+    create_classification_dataset,
+    create_localization_dataset,
+    preprocess_phenikaa,
 )
 from spine_vision.training.trainers.classification import ClassificationConfig
 from spine_vision.training.trainers.localization import LocalizationConfig
@@ -116,16 +116,13 @@ def cli() -> None:
         case DatasetCommand(cmd=cmd):
             match cmd:
                 case LocalizationDatasetConfig():
-                    processor = LocalizationDatasetProcessor(cmd)
-                    result = processor.process()
+                    result = create_localization_dataset(cmd)
                     logger.info(result.summary)
                 case PreprocessConfig():
-                    processor = PhenikkaaProcessor(cmd)
-                    result = processor.process()
+                    result = preprocess_phenikaa(cmd)
                     logger.info(result.summary)
                 case ClassificationDatasetConfig():
-                    processor = ClassificationDatasetProcessor(cmd)
-                    result = processor.process()
+                    result = create_classification_dataset(cmd)
                     logger.info(result.summary)
         case TrainCommand(cmd=cmd):
             match cmd:

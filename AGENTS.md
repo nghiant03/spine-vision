@@ -1,4 +1,5 @@
 # AGENTS.md - Spine Vision
+> Agents **MUST** maintain this file after any code changes.
 
 ## Project Overview
 
@@ -83,16 +84,20 @@ spine-vision/
 │   │   ├── writers.py         # Format conversion & export
 │   │   └── tabular.py         # Excel/CSV handling, write_records_csv
 │   ├── datasets/              # Dataset creation pipelines
-│   │   ├── __init__.py        # All processor exports
-│   │   ├── base.py            # BaseProcessor, ProcessingResult
+│   │   ├── __init__.py        # All function exports
+│   │   ├── base.py            # ProcessingResult dataclass
 │   │   ├── levels.py          # IVD level constants (LEVEL_TO_IDX, etc.)
-│   │   ├── localization.py    # LocalizationDatasetConfig, LocalizationDatasetProcessor
-│   │   ├── classification.py  # ClassificationDatasetConfig, ClassificationDatasetProcessor
-│   │   ├── image_processing.py # Image resampling, cropping, IVD localization utilities
-│   │   ├── source_processors.py # Phenikaa/SPIDER dataset processing functions
+│   │   ├── localization.py    # LocalizationDatasetConfig, create_localization_dataset()
 │   │   ├── rsna.py            # RSNA series mapping utilities
+│   │   ├── classification/    # Classification dataset subpackage
+│   │   │   ├── __init__.py    # create_classification_dataset() + exports
+│   │   │   ├── config.py      # ClassificationDatasetConfig, ClassificationRecord
+│   │   │   ├── cropping.py    # Image resampling, cropping, IVD localization
+│   │   │   ├── phenikaa.py    # Phenikaa source processor
+│   │   │   ├── spider.py      # SPIDER source processor + utilities
+│   │   │   └── recovery.py    # Annotation recovery functions
 │   │   └── phenikaa/          # Phenikaa dataset preprocessing
-│   │       ├── __init__.py    # PreprocessConfig, PhenikkaaProcessor
+│   │       ├── __init__.py    # PreprocessConfig, preprocess_phenikaa()
 │   │       ├── ocr.py         # DocumentExtractor, TextDetector, TextRecognizer
 │   │       └── matching.py    # PatientMatcher, fuzzy_value_extract
 │   ├── training/              # Training infrastructure
@@ -216,30 +221,28 @@ arr_uint8 = normalize_to_uint8(float_array)
 ### Datasets (`spine_vision.datasets`)
 ```python
 from spine_vision.datasets import (
-    # Base classes
-    BaseProcessor, ProcessingResult,
+    # Result type
+    ProcessingResult,
     # Localization
-    LocalizationDatasetConfig, LocalizationDatasetProcessor,
+    LocalizationDatasetConfig, create_localization_dataset,
     # Phenikaa preprocessing
-    PreprocessConfig, PhenikkaaProcessor,
+    PreprocessConfig, preprocess_phenikaa,
     # Classification dataset
-    ClassificationDatasetConfig, ClassificationDatasetProcessor,
+    ClassificationDatasetConfig, create_classification_dataset,
     # RSNA utilities
     load_series_mapping, get_series_type,
 )
 
 # Localization dataset
 config = LocalizationDatasetConfig(base_path=Path("data"))
-processor = LocalizationDatasetProcessor(config)
-result = processor.process()
+result = create_localization_dataset(config)
 print(f"Created {result.num_samples} localization annotations at {result.output_path}")
 
 # Phenikaa preprocessing (supports both report formats)
 # - ID-named reports (250010139.png): extracts name/birthday from OCR
 # - Patient-named reports (NGUYEN_VAN_SON_20250718.pdf): extracts ID from OCR
 config = PreprocessConfig(data_path=Path("data/raw/Phenikaa"))
-processor = PhenikkaaProcessor(config)
-result = processor.process()
+result = preprocess_phenikaa(config)
 print(result.summary)  # "Matched X of Y patients"
 
 # Classification dataset (Phenikaa + SPIDER with IVD cropping)
@@ -249,8 +252,7 @@ config = ClassificationDatasetConfig(
     crop_size=(64, 64),
     crop_delta_mm=(50.0, 20.0, 30.0, 30.0),  # left, right, top, bottom in mm
 )
-processor = ClassificationDatasetProcessor(config)
-result = processor.process()
+result = create_classification_dataset(config)
 print(f"Created {result.num_samples} classification samples")
 ```
 
@@ -395,13 +397,12 @@ metrics = trainer.evaluate(visualize=True)
 | `add_file_log()` | Add rotating file log handler |
 
 ### Dataset Processing
-| Class | Purpose |
-|-------|---------|
-| `BaseProcessor` | Abstract base for dataset processors |
+| Function/Class | Purpose |
+|----------------|---------|
 | `ProcessingResult` | Container for processing statistics |
-| `LocalizationDatasetProcessor` | Creates localization dataset from RSNA + Lumbar Coords |
-| `ClassificationDatasetProcessor` | Creates cropped IVD images from Phenikaa + SPIDER |
-| `PhenikkaaProcessor` | OCR extraction + patient matching |
+| `create_localization_dataset()` | Creates localization dataset from RSNA + Lumbar Coords |
+| `create_classification_dataset()` | Creates cropped IVD images from Phenikaa + SPIDER |
+| `preprocess_phenikaa()` | OCR extraction + patient matching |
 | `PatientMatcher` | Fuzzy matching of patient data to image folders |
 | `DocumentExtractor` | PaddleOCR + VietOCR text extraction |
 
@@ -466,36 +467,34 @@ metrics = trainer.evaluate(visualize=True)
 Add a new dataset module in `spine_vision/datasets/`:
 ```python
 # spine_vision/datasets/my_dataset.py
-from spine_vision.datasets.base import BaseProcessor, DatasetConfig, ProcessingResult
+from pathlib import Path
+from pydantic import BaseModel
+from spine_vision.datasets.base import ProcessingResult
+from spine_vision.core import setup_logger, add_file_log
 
-class MyDatasetConfig(DatasetConfig):
+class MyDatasetConfig(BaseModel):
     """Configuration for my dataset."""
+    base_path: Path = Path("data")
+    output_path: Path = Path("data/processed/my_dataset")
     custom_param: str = "value"
+    verbose: bool = False
+    enable_file_log: bool = False
+    log_path: Path = Path("logs")
 
-class MyDatasetProcessor(BaseProcessor[MyDatasetConfig]):
-    """Processor for creating my dataset."""
+def create_my_dataset(config: MyDatasetConfig) -> ProcessingResult:
+    """Create my dataset."""
+    setup_logger(verbose=config.verbose)
+    if config.enable_file_log:
+        add_file_log(config.log_path)
 
-    def __init__(self, config: MyDatasetConfig) -> None:
-        super().__init__(config)
-        setup_logger(verbose=config.verbose)
-        if config.enable_file_log:
-            add_file_log(config.log_path)
+    # Your processing logic here
+    num_samples = 100
 
-    def process(self) -> ProcessingResult:
-        """Execute dataset creation pipeline."""
-        self.on_process_begin()
-
-        # Your processing logic here
-        num_samples = 100
-
-        result = ProcessingResult(
-            num_samples=num_samples,
-            output_path=self.config.output_path,
-            summary=f"Processed {num_samples} samples",
-        )
-
-        self.on_process_end(result)
-        return result
+    return ProcessingResult(
+        num_samples=num_samples,
+        output_path=config.output_path,
+        summary=f"Processed {num_samples} samples",
+    )
 ```
 
 Then register it in `spine_vision/cli/__init__.py`.

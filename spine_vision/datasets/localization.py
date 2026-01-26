@@ -22,7 +22,7 @@ from tqdm.rich import tqdm
 from tqdm.std import TqdmExperimentalWarning
 
 from spine_vision.core import BaseConfig, add_file_log, setup_logger
-from spine_vision.datasets.base import BaseProcessor, ProcessingResult
+from spine_vision.datasets.base import ProcessingResult
 from spine_vision.datasets.rsna import get_series_type, load_series_mapping
 from spine_vision.io import normalize_to_uint8, write_records_csv
 
@@ -323,85 +323,60 @@ def log_dataset_summary(records: list[AnnotationRecord]) -> None:
     logger.info("=" * 50)
 
 
-class LocalizationDatasetProcessor(BaseProcessor[LocalizationDatasetConfig]):
-    """Processor for creating localization dataset.
+def create_localization_dataset(config: LocalizationDatasetConfig) -> ProcessingResult:
+    """Create combined localization dataset.
 
     Combines Lumbar Coords pretrain data and RSNA improved coordinates
     for training localization models.
-    """
-
-    def __init__(self, config: LocalizationDatasetConfig) -> None:
-        """Initialize processor with configuration.
-
-        Args:
-            config: Localization dataset configuration.
-        """
-        super().__init__(config)
-        # Initialize logging
-        setup_logger(verbose=config.verbose)
-        if config.enable_file_log:
-            add_file_log(config.log_path)
-
-    def process(self) -> ProcessingResult:
-        """Execute IVD coordinates dataset creation pipeline.
-
-        Returns:
-            ProcessingResult with dataset statistics.
-        """
-        warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
-        self.on_process_begin()
-
-        output_images_path = self.config.output_path / "images"
-        output_images_path.mkdir(parents=True, exist_ok=True)
-
-        all_records: list[AnnotationRecord] = []
-
-        logger.info("Processing Lumbar Coords pretrain data...")
-        pretrain_records = process_lumbar_coords_pretrain(
-            coords_csv_path=self.config.lumbar_coords_path / "coords_pretrain.csv",
-            data_path=self.config.lumbar_coords_path / "data",
-            output_images_path=output_images_path,
-        )
-        all_records.extend(pretrain_records)
-        logger.info(f"Processed {len(pretrain_records)} pretrain annotation records")
-
-        logger.info("Processing RSNA improved coordinates...")
-        rsna_records = process_rsna_improved(
-            coords_csv_path=self.config.lumbar_coords_path / "coords_rsna_improved.csv",
-            series_desc_path=self.config.rsna_path / "train_series_descriptions.csv",
-            rsna_images_path=self.config.rsna_path / "train_images",
-            output_images_path=output_images_path,
-            config=self.config,
-        )
-        all_records.extend(rsna_records)
-        logger.info(f"Processed {len(rsna_records)} RSNA annotation records")
-
-        csv_path = self.config.output_path / "annotations.csv"
-        write_records_csv(all_records, csv_path)
-
-        log_dataset_summary(all_records)
-        logger.info(f"Dataset saved to: {self.config.output_path}")
-        logger.info(f"Annotations CSV: {csv_path}")
-        logger.info(f"Images directory: {output_images_path}")
-
-        result = ProcessingResult(
-            num_samples=len(all_records),
-            output_path=self.config.output_path,
-            summary=f"Created {len(all_records)} IVD coordinate annotations",
-        )
-
-        self.on_process_end(result)
-        return result
-
-
-def main(config: LocalizationDatasetConfig) -> None:
-    """Create combined localization dataset.
-
-    Convenience wrapper around LocalizationDatasetProcessor for backward compatibility.
 
     Args:
-        config: Dataset configuration.
+        config: Localization dataset configuration.
+
+    Returns:
+        ProcessingResult with dataset statistics.
     """
-    processor = LocalizationDatasetProcessor(config)
-    result = processor.process()
-    logger.info(result.summary)
+    warnings.filterwarnings("ignore", category=TqdmExperimentalWarning)
+
+    # Initialize logging
+    setup_logger(verbose=config.verbose)
+    if config.enable_file_log:
+        add_file_log(config.log_path)
+
+    output_images_path = config.output_path / "images"
+    output_images_path.mkdir(parents=True, exist_ok=True)
+
+    all_records: list[AnnotationRecord] = []
+
+    logger.info("Processing Lumbar Coords pretrain data...")
+    pretrain_records = process_lumbar_coords_pretrain(
+        coords_csv_path=config.lumbar_coords_path / "coords_pretrain.csv",
+        data_path=config.lumbar_coords_path / "data",
+        output_images_path=output_images_path,
+    )
+    all_records.extend(pretrain_records)
+    logger.info(f"Processed {len(pretrain_records)} pretrain annotation records")
+
+    logger.info("Processing RSNA improved coordinates...")
+    rsna_records = process_rsna_improved(
+        coords_csv_path=config.lumbar_coords_path / "coords_rsna_improved.csv",
+        series_desc_path=config.rsna_path / "train_series_descriptions.csv",
+        rsna_images_path=config.rsna_path / "train_images",
+        output_images_path=output_images_path,
+        config=config,
+    )
+    all_records.extend(rsna_records)
+    logger.info(f"Processed {len(rsna_records)} RSNA annotation records")
+
+    csv_path = config.output_path / "annotations.csv"
+    write_records_csv(all_records, csv_path)
+
+    log_dataset_summary(all_records)
+    logger.info(f"Dataset saved to: {config.output_path}")
+    logger.info(f"Annotations CSV: {csv_path}")
+    logger.info(f"Images directory: {output_images_path}")
+
+    return ProcessingResult(
+        num_samples=len(all_records),
+        output_path=config.output_path,
+        summary=f"Created {len(all_records)} IVD coordinate annotations",
+    )
