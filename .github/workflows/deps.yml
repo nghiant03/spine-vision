@@ -41,10 +41,10 @@ jobs:
       - name: Generate internal module dependency graph
         run: |
           uv run pydeps spine_vision \
+            --noshow \
             -T svg
             -o docs/dependencies/internal-deps.svg \
             --only spine_vision \
-            --no-show \
             --exclude-exact spine_vision.__init__ \
             --max-bacon 3
         continue-on-error: true
