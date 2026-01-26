@@ -32,7 +32,7 @@ jobs:
 
       - name: Install visualization tools
         run: |
-          uv pip install pydeps pipdeptree graphviz
+          uv pip install pydeps graphviz
           sudo apt-get update && sudo apt-get install -y graphviz
 
       - name: Create docs directory
@@ -41,47 +41,13 @@ jobs:
       - name: Generate internal module dependency graph
         run: |
           uv run pydeps spine_vision \
+            -T svg
+            -o docs/dependencies/internal-deps.svg \
             --only spine_vision \
             --no-show \
-            --output docs/dependencies/internal-deps.svg \
             --exclude-exact spine_vision.__init__ \
             --max-bacon 3
         continue-on-error: true
-
-      - name: Generate internal module dependency graph (simplified)
-        run: |
-          uv run pydeps spine_vision \
-            --only spine_vision \
-            --no-show \
-            --output docs/dependencies/internal-deps-cluster.svg \
-            --cluster \
-            --max-bacon 2
-        continue-on-error: true
-
-      - name: Generate external package dependency tree
-        run: |
-          uv run pipdeptree --packages spine-vision --graph-output svg > docs/dependencies/external-deps.svg 2>/dev/null || \
-          uv run pipdeptree --graph-output svg > docs/dependencies/external-deps.svg
-        continue-on-error: true
-
-      - name: Generate dependency tree text
-        run: |
-          echo "# Dependency Tree" > docs/dependencies/DEPENDENCIES.md
-          echo "" >> docs/dependencies/DEPENDENCIES.md
-          echo "Generated on: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> docs/dependencies/DEPENDENCIES.md
-          echo "" >> docs/dependencies/DEPENDENCIES.md
-          echo "## External Dependencies" >> docs/dependencies/DEPENDENCIES.md
-          echo "" >> docs/dependencies/DEPENDENCIES.md
-          echo '```' >> docs/dependencies/DEPENDENCIES.md
-          uv run pipdeptree --packages spine-vision 2>/dev/null >> docs/dependencies/DEPENDENCIES.md || \
-          uv run pipdeptree >> docs/dependencies/DEPENDENCIES.md
-          echo '```' >> docs/dependencies/DEPENDENCIES.md
-          echo "" >> docs/dependencies/DEPENDENCIES.md
-          echo "## Graphs" >> docs/dependencies/DEPENDENCIES.md
-          echo "" >> docs/dependencies/DEPENDENCIES.md
-          echo "- [Internal Module Dependencies](internal-deps.svg)" >> docs/dependencies/DEPENDENCIES.md
-          echo "- [Internal Dependencies (Clustered)](internal-deps-cluster.svg)" >> docs/dependencies/DEPENDENCIES.md
-          echo "- [External Package Dependencies](external-deps.svg)" >> docs/dependencies/DEPENDENCIES.md
 
       - name: Commit and push if changed
         run: |
