@@ -7,7 +7,7 @@ include = ["spine_vision*"]
 
 [project]
 name = "spine-vision"
-version = "0.1.0"
+version = "0.2.0"
 description = "Medical imaging pipeline for lumbar spine MRI analysis and radiological grading prediction"
 readme = "README.md"
 requires-python = ">=3.11"
