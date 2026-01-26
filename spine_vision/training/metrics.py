@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 
-from spine_vision.datasets.labels import AVAILABLE_LABELS, LABEL_INFO
+from spine_vision.core.tasks import AVAILABLE_TASK_NAMES, TaskConfig, get_task
 
 if TYPE_CHECKING:
-    from spine_vision.training.models.generic import TaskConfig
+    pass
 
 
 @dataclass
@@ -321,7 +321,7 @@ class ClassificationMetrics(BaseMetrics):
 class ClassifierMetrics:
     """Metrics calculator for Classifier model.
 
-    Computes metrics for each task head based on task type from LABEL_INFO:
+    Computes metrics for each task head based on task type from TaskConfig:
     - multiclass: accuracy, balanced accuracy, macro F1
     - binary: accuracy, precision, recall, F1
 
@@ -349,16 +349,16 @@ class ClassifierMetrics:
 
         Args:
             tasks: TaskConfig list from Classifier model. If provided, uses task
-                types from these configs. Otherwise uses LABEL_INFO.
+                types from these configs. Otherwise uses get_task().
             target_labels: Filter to these task names. If None, uses all labels.
         """
         # Determine which labels to track
         if target_labels is None:
-            labels_to_track = list(AVAILABLE_LABELS)
+            labels_to_track = list(AVAILABLE_TASK_NAMES)
         else:
             labels_to_track = list(target_labels)
 
-        # Build task type mapping from tasks or LABEL_INFO
+        # Build task type mapping from tasks or get_task()
         task_types: dict[str, str] = {}
         num_classes: dict[str, int] = {}
 
@@ -369,9 +369,9 @@ class ClassifierMetrics:
                     num_classes[task.name] = task.num_classes
         else:
             for label in labels_to_track:
-                if label in LABEL_INFO:
-                    task_types[label] = LABEL_INFO[label]["type"]
-                    num_classes[label] = LABEL_INFO[label]["num_classes"]
+                task = get_task(label)
+                task_types[label] = task.task_type
+                num_classes[label] = task.num_classes
 
         self._task_types = task_types
 

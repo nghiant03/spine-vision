@@ -417,7 +417,7 @@ def main(config: TestConfig) -> dict:
         task_name = "class"
         model = Classifier(
             backbone=config.backbone,
-            tasks=[TaskConfig(name=task_name, num_classes=config.num_classes)],
+            tasks=[TaskConfig(name=task_name, num_classes=config.num_classes, task_type="multiclass")],
             pretrained=False,
         )
         model = _load_checkpoint(model, config)

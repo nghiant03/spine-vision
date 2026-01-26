@@ -52,13 +52,15 @@ from spine_vision.training.metrics import (
     LocalizationMetrics,
 )
 from spine_vision.training.models import (
+    AVAILABLE_TASK_NAMES,
     BACKBONES,
     BackboneFactory,
     Classifier,
     CoordinateRegressor,
-    LUMBAR_SPINE_TASKS,
-    MTLTargets,
+    TASK_REGISTRY,
     TaskConfig,
+    get_task,
+    get_tasks,
     list_backbones,
 )
 from spine_vision.training.registry import (
@@ -76,10 +78,10 @@ from spine_vision.training.trainers import (
     LocalizationTrainer,
 )
 from spine_vision.visualization import (
-    LABEL_COLORS,
-    LABEL_DISPLAY_NAMES,
     DatasetVisualizer,
     TrainingVisualizer,
+    get_task_color,
+    get_task_display_name,
     load_classification_original_images,
     load_original_images,
 )
@@ -113,8 +115,10 @@ __all__ = [
     "Classifier",
     "CoordinateRegressor",
     "TaskConfig",
-    "LUMBAR_SPINE_TASKS",
-    "MTLTargets",
+    "TASK_REGISTRY",
+    "AVAILABLE_TASK_NAMES",
+    "get_task",
+    "get_tasks",
     "BackboneFactory",
     "BACKBONES",
     "list_backbones",
@@ -131,8 +135,8 @@ __all__ = [
     # Visualization
     "TrainingVisualizer",
     "DatasetVisualizer",
-    "LABEL_DISPLAY_NAMES",
-    "LABEL_COLORS",
+    "get_task_display_name",
+    "get_task_color",
     "load_original_images",
     "load_classification_original_images",
 ]

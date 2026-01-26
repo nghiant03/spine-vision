@@ -15,10 +15,6 @@ from loguru import logger
 from matplotlib.figure import Figure
 from PIL import Image
 
-from spine_vision.datasets.labels import LABEL_COLORS, LABEL_DISPLAY_NAMES
-
-# Re-export for backward compatibility
-__all__ = ["LABEL_COLORS", "LABEL_DISPLAY_NAMES"]
 
 # Standard colors for confusion categories
 CONFUSION_COLORS = {

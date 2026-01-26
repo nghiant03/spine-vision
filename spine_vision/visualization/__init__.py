@@ -14,7 +14,13 @@ Uses matplotlib and seaborn for static visualizations.
 Supports optional trackio logging for experiment tracking.
 """
 
-from spine_vision.datasets.labels import LABEL_COLORS, LABEL_DISPLAY_NAMES
+from spine_vision.core.tasks import (
+    AVAILABLE_TASK_NAMES,
+    get_task_color,
+    get_task_colors,
+    get_task_display_name,
+    get_task_display_names,
+)
 from spine_vision.visualization.base import (
     load_classification_original_images,
     load_original_images,
@@ -50,9 +56,12 @@ from spine_vision.visualization.visualizer import (
 )
 
 __all__ = [
-    # Constants
-    "LABEL_DISPLAY_NAMES",
-    "LABEL_COLORS",
+    # Task info helpers
+    "AVAILABLE_TASK_NAMES",
+    "get_task_display_name",
+    "get_task_display_names",
+    "get_task_color",
+    "get_task_colors",
     # Base utilities
     "load_original_images",
     "load_classification_original_images",

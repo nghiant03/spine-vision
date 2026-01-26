@@ -6,133 +6,43 @@ Provides composable model architectures:
 
 All models use:
 - Configurable backbone via BackboneFactory
-- Configurable head via HeadConfig
 - Standard BaseModel interface
+- Strategy pattern for task-type-specific behavior
 
 Usage:
-    from spine_vision.training.models import Classifier, TaskConfig
+    from spine_vision.training.models import Classifier
+    from spine_vision.core.tasks import get_task, get_tasks
 
     # Single-task classification
-    model = Classifier(
-        backbone="resnet50",
-        tasks=[TaskConfig(name="grade", num_classes=5)],
-    )
-    output = model(images)  # {"grade": logits}
+    task = get_task("pfirrmann")
+    model = Classifier(backbone="resnet50", tasks=[task])
+    output = model(images)  # {"pfirrmann": logits}
 
-    # Multi-task classification
-    model = Classifier(
-        backbone="convnext_base",
-        tasks=[
-            TaskConfig(name="grade", num_classes=5, task_type="multiclass"),
-            TaskConfig(name="condition", num_classes=1, task_type="binary"),
-        ],
-    )
-    output = model(images)  # {"grade": logits, "condition": logits}
+    # Multi-task classification with all lumbar spine tasks
+    model = Classifier(backbone="convnext_base", tasks=get_tasks())
+    output = model(images)  # {"pfirrmann": logits, "modic": logits, ...}
 """
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Sequence
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from PIL import Image
 
+from spine_vision.core.tasks import (
+    TaskConfig,
+    compute_predictions_for_tasks,
+    compute_probabilities_for_tasks,
+    create_loss_functions,
+    get_strategy,
+    get_tasks,
+)
 from spine_vision.training.base import BaseModel
 from spine_vision.training.heads import HeadConfig, create_head
-from spine_vision.training.losses import FocalLoss
 from spine_vision.training.models.backbone import BackboneFactory
 from spine_vision.training.registry import register_model
-
-
-@dataclass
-class TaskConfig:
-    """Configuration for a single task in multi-task learning.
-
-    Attributes:
-        name: Task name (used as key in outputs).
-        num_classes: Number of output classes/values.
-        task_type: Type of task (multiclass, binary, multilabel, regression).
-        head_config: Optional custom head configuration.
-        loss_weight: Weight for this task's loss in total loss.
-        label_smoothing: Label smoothing for cross-entropy (multiclass only).
-        use_focal_loss: Use Focal Loss for binary/multilabel tasks.
-        focal_gamma: Focusing parameter for Focal Loss (default: 2.0).
-        focal_alpha: Optional class weight for Focal Loss (default: None).
-
-    Note:
-        Class imbalance is handled via weighted sampling in the dataloader,
-        not via loss function weighting. focal_alpha is None by default
-        to avoid "double compensation" with the sampler.
-    """
-
-    name: str
-    num_classes: int
-    task_type: Literal["multiclass", "binary", "multilabel", "regression"] = "multiclass"
-    head_config: HeadConfig | None = None
-    loss_weight: float = 1.0
-    label_smoothing: float = 0.0
-    use_focal_loss: bool = False
-    focal_gamma: float = 2.0
-    focal_alpha: float | None = None
-
-
-# Predefined task configurations for lumbar spine classification
-LUMBAR_SPINE_TASKS: list[TaskConfig] = [
-    TaskConfig(name="pfirrmann", num_classes=5, task_type="multiclass", label_smoothing=0.1),
-    TaskConfig(name="modic", num_classes=4, task_type="multiclass", label_smoothing=0.1),
-    TaskConfig(name="herniation", num_classes=1, task_type="binary"),
-    TaskConfig(name="bulging", num_classes=1, task_type="binary"),
-    TaskConfig(name="upper_endplate", num_classes=1, task_type="binary"),
-    TaskConfig(name="lower_endplate", num_classes=1, task_type="binary"),
-    TaskConfig(name="spondy", num_classes=1, task_type="binary"),
-    TaskConfig(name="narrowing", num_classes=1, task_type="binary"),
-]
-
-
-@dataclass
-class MTLTargets:
-    """Container for multi-task targets.
-
-    For lumbar spine classification with 8 predefined tasks.
-    """
-
-    pfirrmann: torch.Tensor  # [B] int64, values 0-4
-    modic: torch.Tensor  # [B] int64, values 0-3
-    herniation: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
-    bulging: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
-    upper_endplate: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
-    lower_endplate: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
-    spondy: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
-    narrowing: torch.Tensor  # [B, 1] float32, 0.0 or 1.0
-
-    def to(self, device: torch.device | str) -> "MTLTargets":
-        """Move all tensors to the specified device."""
-        return MTLTargets(
-            pfirrmann=self.pfirrmann.to(device),
-            modic=self.modic.to(device),
-            herniation=self.herniation.to(device),
-            bulging=self.bulging.to(device),
-            upper_endplate=self.upper_endplate.to(device),
-            lower_endplate=self.lower_endplate.to(device),
-            spondy=self.spondy.to(device),
-            narrowing=self.narrowing.to(device),
-        )
-
-    def to_dict(self) -> dict[str, torch.Tensor]:
-        """Convert to dictionary format."""
-        return {
-            "pfirrmann": self.pfirrmann,
-            "modic": self.modic,
-            "herniation": self.herniation,
-            "bulging": self.bulging,
-            "upper_endplate": self.upper_endplate,
-            "lower_endplate": self.lower_endplate,
-            "spondy": self.spondy,
-            "narrowing": self.narrowing,
-        }
 
 
 @register_model("classifier")
@@ -145,30 +55,14 @@ class Classifier(BaseModel):
     Architecture:
         - Configurable backbone (ResNet, ConvNeXt, ViT, etc.)
         - Global Average Pooling -> feature_dim
-        - Separate configurable heads per task
+        - Separate heads per task
 
-    Supports multiple task types:
-        - multiclass: CrossEntropyLoss
-        - binary: BCEWithLogitsLoss (single output)
-        - multilabel: BCEWithLogitsLoss (multiple outputs)
+    Task types handled via strategy pattern:
+        - multiclass: CrossEntropyLoss, argmax predictions
+        - binary: BCEWithLogitsLoss, sigmoid > 0.5
+        - multilabel: BCEWithLogitsLoss, sigmoid > 0.5
+        - ordinal: CrossEntropyLoss (extensible for CORAL)
         - regression: MSELoss
-
-    Single-task usage:
-        model = Classifier(
-            backbone="resnet50",
-            tasks=[TaskConfig(name="grade", num_classes=5)],
-        )
-        output = model(images)  # {"grade": logits}
-
-    Multi-task usage:
-        model = Classifier(
-            backbone="resnet50",
-            tasks=[
-                TaskConfig(name="grade", num_classes=5, task_type="multiclass"),
-                TaskConfig(name="herniation", num_classes=1, task_type="binary"),
-            ],
-        )
-        output = model(images)  # {"grade": logits, "herniation": logits}
     """
 
     def __init__(
@@ -178,17 +72,15 @@ class Classifier(BaseModel):
         pretrained: bool = True,
         dropout: float = 0.3,
         freeze_backbone: bool = False,
-        default_head_config: HeadConfig | None = None,
     ) -> None:
         """Initialize Classifier.
 
         Args:
             backbone: Backbone name (see BackboneFactory for options).
-            tasks: List of task configurations. If None, uses LUMBAR_SPINE_TASKS.
+            tasks: List of task configurations. If None, uses all registered tasks.
             pretrained: Use pretrained weights.
-            dropout: Dropout rate (used if no head_config).
+            dropout: Dropout rate for feature layer.
             freeze_backbone: Freeze backbone weights.
-            default_head_config: Default head config for tasks without custom config.
         """
         super().__init__()
 
@@ -197,9 +89,9 @@ class Classifier(BaseModel):
         self._dropout = dropout
         self._freeze_backbone = freeze_backbone
 
-        # Use predefined tasks if none provided
+        # Use all registered tasks if none provided
         if tasks is None:
-            tasks = [TaskConfig(**t.__dict__) for t in LUMBAR_SPINE_TASKS]
+            tasks = get_tasks()
         self._tasks = tasks
         self._task_names = [t.name for t in tasks]
 
@@ -213,50 +105,15 @@ class Classifier(BaseModel):
         # Create task heads
         self.heads = nn.ModuleDict()
         for task in tasks:
-            if task.head_config is not None:
-                head = create_head(task.head_config, feature_dim, task.num_classes)
-            elif default_head_config is not None:
-                head = create_head(default_head_config, feature_dim, task.num_classes)
-            else:
-                head = nn.Linear(feature_dim, task.num_classes)
-            self.heads[task.name] = head
+            self.heads[task.name] = nn.Linear(feature_dim, task.num_classes)
 
-        # Initialize loss functions (use ModuleDict so they move to GPU with model)
-        self._loss_functions: nn.ModuleDict = nn.ModuleDict()
-        self._loss_weights: dict[str, float] = {}
-        self._init_loss_functions(tasks)
+        # Initialize loss functions using strategies
+        self._loss_functions, self._loss_weights = create_loss_functions(tasks)
 
         if freeze_backbone:
             self.freeze_backbone()
 
         self._is_initialized = True
-
-    def _init_loss_functions(self, tasks: list[TaskConfig]) -> None:
-        """Initialize loss functions for each task.
-
-        Note: Class imbalance is handled via weighted sampling in the dataloader,
-        not via loss function weighting. This simplifies the loss computation and
-        provides more stable training dynamics.
-        """
-        for task in tasks:
-            self._loss_weights[task.name] = task.loss_weight
-
-            if task.task_type == "multiclass":
-                self._loss_functions[task.name] = nn.CrossEntropyLoss(
-                    label_smoothing=task.label_smoothing,
-                )
-            elif task.task_type in ("binary", "multilabel"):
-                if task.use_focal_loss:
-                    self._loss_functions[task.name] = FocalLoss(
-                        gamma=task.focal_gamma,
-                        alpha=task.focal_alpha,
-                    )
-                else:
-                    self._loss_functions[task.name] = nn.BCEWithLogitsLoss()
-            elif task.task_type == "regression":
-                self._loss_functions[task.name] = nn.MSELoss()
-            else:
-                raise ValueError(f"Unknown task type: {task.task_type}")
 
     @property
     def name(self) -> str:
@@ -267,6 +124,10 @@ class Classifier(BaseModel):
         return self._task_names
 
     @property
+    def tasks(self) -> list[TaskConfig]:
+        return self._tasks
+
+    @property
     def feature_dim(self) -> int:
         return self._feature_dim
 
@@ -275,14 +136,12 @@ class Classifier(BaseModel):
 
         Args:
             x: Input images [B, C, H, W].
-            **kwargs: Unused, for signature compatibility.
 
         Returns:
             Dictionary mapping task names to output logits.
         """
         features = self.backbone(x)
         features = self.dropout(features)
-
         return {name: head(features) for name, head in self.heads.items()}
 
     def get_loss(
@@ -294,6 +153,7 @@ class Classifier(BaseModel):
         """Compute multi-task loss.
 
         Total loss = sum(weight_i * loss_i) for each task.
+        Targets are formatted via strategy before loss computation.
         """
         total_loss = torch.tensor(0.0, device=next(self.parameters()).device)
 
@@ -303,6 +163,11 @@ class Classifier(BaseModel):
 
             pred = predictions[task.name]
             target = targets[task.name]
+
+            # Format target via strategy
+            strategy = get_strategy(task)
+            target = strategy.format_target(target)
+
             loss_fn = self._loss_functions[task.name]
             weight = self._loss_weights[task.name]
 
@@ -321,8 +186,11 @@ class Classifier(BaseModel):
         for task in self._tasks:
             if task.name not in predictions or task.name not in targets:
                 continue
+
+            strategy = get_strategy(task)
+            target = strategy.format_target(targets[task.name])
             losses[task.name] = self._loss_functions[task.name](
-                predictions[task.name], targets[task.name]
+                predictions[task.name], target
             )
         return losses
 
@@ -338,27 +206,18 @@ class Classifier(BaseModel):
         return self.backbone(x)
 
     def predict(self, x: torch.Tensor, **kwargs: Any) -> dict[str, np.ndarray]:
-        """Run inference and return final predictions."""
+        """Run inference and return final predictions via strategies."""
         self.eval()
         with torch.no_grad():
             outputs = self.forward(x, **kwargs)
+        return compute_predictions_for_tasks(outputs, self._tasks)
 
-        predictions: dict[str, np.ndarray] = {}
-        for task in self._tasks:
-            logits = outputs[task.name]
-
-            if task.task_type == "multiclass":
-                pred = torch.argmax(logits, dim=1)
-            elif task.task_type in ("binary", "multilabel"):
-                pred = (torch.sigmoid(logits) > 0.5).int()
-                if task.task_type == "binary" and pred.shape[-1] == 1:
-                    pred = pred.squeeze(-1)
-            else:
-                pred = logits
-
-            predictions[task.name] = pred.cpu().numpy()
-
-        return predictions
+    def predict_proba(self, x: torch.Tensor, **kwargs: Any) -> dict[str, np.ndarray]:
+        """Run inference and return probabilities via strategies."""
+        self.eval()
+        with torch.no_grad():
+            outputs = self.forward(x, **kwargs)
+        return compute_probabilities_for_tasks(outputs, self._tasks)
 
     def test_inference(
         self,
@@ -407,15 +266,8 @@ class Classifier(BaseModel):
             outputs = self.forward(batch)
         inference_time_ms = (time.perf_counter() - start_time) * 1000
 
-        predictions = self.predict(batch)
-
-        probabilities: dict[str, np.ndarray] = {}
-        for task in self._tasks:
-            logits = outputs[task.name]
-            if task.task_type == "multiclass":
-                probabilities[task.name] = F.softmax(logits, dim=1).cpu().numpy()
-            else:
-                probabilities[task.name] = torch.sigmoid(logits).cpu().numpy()
+        predictions = compute_predictions_for_tasks(outputs, self._tasks)
+        probabilities = compute_probabilities_for_tasks(outputs, self._tasks)
 
         return {
             "predictions": predictions,
@@ -457,7 +309,7 @@ class CoordinateRegressor(BaseModel):
             backbone: Backbone name (see BackboneFactory for options).
             num_outputs: Number of output coordinates per level (default 2 for x,y).
             pretrained: Use pretrained weights.
-            dropout: Dropout rate (used if no head_config).
+            dropout: Dropout rate.
             freeze_backbone: Freeze backbone weights.
             head_config: Custom head configuration.
             num_levels: Number of levels to predict (default 5 for IVD levels).
@@ -494,7 +346,7 @@ class CoordinateRegressor(BaseModel):
                 nn.Sigmoid(),
             )
 
-        # Loss function (works on flattened or multi-level output)
+        # Loss function
         if loss_type == "mse":
             self._loss_fn = nn.MSELoss()
         elif loss_type == "smooth_l1":
@@ -521,23 +373,17 @@ class CoordinateRegressor(BaseModel):
     def num_levels(self) -> int:
         return self._num_levels
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        **kwargs: Any,
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, **kwargs: Any) -> torch.Tensor:
         """Forward pass.
 
         Args:
             x: Input images [B, C, H, W].
-            **kwargs: Unused, for signature compatibility.
 
         Returns:
             Predicted coordinates [B, num_levels, 2] in [0, 1].
         """
         features = self.backbone(x)
         output = self.head(features)  # [B, num_levels * 2]
-        # Reshape to [B, num_levels, 2]
         return output.view(-1, self._num_levels, self._num_outputs)
 
     def get_loss(
@@ -552,16 +398,13 @@ class CoordinateRegressor(BaseModel):
         Args:
             predictions: Predicted coordinates [B, num_levels, 2].
             targets: Ground truth coordinates [B, num_levels, 2].
-            mask: Optional mask [B, num_levels] indicating valid targets.
-                  1 = valid, 0 = invalid (will be ignored in loss).
+            mask: Optional mask [B, num_levels] for valid targets.
 
         Returns:
             Scalar loss value.
         """
         if mask is not None:
-            # Expand mask to match coordinate dimensions [B, num_levels, 2]
             mask_expanded = mask.unsqueeze(-1).expand_as(predictions)
-            # Only compute loss on valid predictions
             valid_preds = predictions[mask_expanded.bool()]
             valid_targets = targets[mask_expanded.bool()]
             if valid_preds.numel() == 0:
@@ -586,22 +429,7 @@ class CoordinateRegressor(BaseModel):
         image_size: tuple[int, int] = (224, 224),
         device: str | torch.device | None = None,
     ) -> dict[str, Any]:
-        """Test inference with images.
-
-        Args:
-            images: Input images (paths, PIL images, or numpy arrays).
-            image_size: Target image size (H, W).
-            device: Device to run inference on.
-
-        Returns:
-            Dictionary with:
-                - predictions: Normalized coords [N, num_levels, 2] in [0, 1].
-                - coords_pixel: Pixel coords [N, num_levels, 2].
-                - images: Processed images [N, H, W, 3].
-                - inference_time_ms: Inference time in milliseconds.
-                - num_images: Number of images processed.
-                - device: Device used for inference.
-        """
+        """Test inference with images."""
         import time
 
         from torchvision import transforms
@@ -639,13 +467,12 @@ class CoordinateRegressor(BaseModel):
         self.eval()
         start_time = time.perf_counter()
         with torch.no_grad():
-            predictions = self.forward(batch)  # [N, num_levels, 2]
+            predictions = self.forward(batch)
         inference_time_ms = (time.perf_counter() - start_time) * 1000
 
-        predictions_np = predictions.cpu().numpy()  # [N, num_levels, 2]
+        predictions_np = predictions.cpu().numpy()
         h, w = image_size
-        # Scale to pixel coordinates
-        coords_pixel = predictions_np * np.array([w, h])  # Broadcasting: [N, num_levels, 2]
+        coords_pixel = predictions_np * np.array([w, h])
 
         return {
             "predictions": predictions_np,
@@ -657,7 +484,6 @@ class CoordinateRegressor(BaseModel):
         }
 
 
-# Expose backbone list for convenience
 def list_backbones(family: str | None = None) -> list[str]:
     """List available backbone names."""
     return BackboneFactory.list_backbones(family)

@@ -14,7 +14,7 @@ from loguru import logger
 from matplotlib.figure import Figure
 from PIL import Image
 
-from spine_vision.datasets.labels import LABEL_DISPLAY_NAMES
+from spine_vision.core.tasks import get_task_display_name
 from spine_vision.training.datasets.classification import ClassificationDataset
 from spine_vision.visualization.base import extract_prediction_value, save_figure
 from spine_vision.visualization.classification import (
@@ -386,7 +386,7 @@ class TrainingVisualizer(BaseVisualizer):
 
             for label in labels:
                 pred_val, gt_val = extract_prediction_value(predictions[label][i], targets[label][i])
-                display_name = LABEL_DISPLAY_NAMES.get(label, label)
+                display_name = get_task_display_name(label)
                 status = "\u2713" if pred_val == gt_val else "\u2717"
                 caption_parts.append(f"{display_name}: {pred_val}/{gt_val} {status}")
 

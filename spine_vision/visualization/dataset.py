@@ -17,13 +17,13 @@ import seaborn as sns
 from matplotlib.figure import Figure
 from PIL import Image
 
-from spine_vision.datasets.labels import (
-    AVAILABLE_LABELS,
-    IDX_TO_LEVEL,
-    LABEL_COLORS,
-    LABEL_DISPLAY_NAMES,
-    LABEL_INFO,
+from spine_vision.core.tasks import (
+    AVAILABLE_TASK_NAMES,
+    get_task,
+    get_task_color,
+    get_task_display_name,
 )
+from spine_vision.datasets.levels import IDX_TO_LEVEL
 from spine_vision.training.datasets.classification import ClassificationDataset
 from spine_vision.visualization.base import save_figure
 
@@ -152,7 +152,7 @@ def plot_binary_label_distributions(
         Matplotlib figure with binary label distributions.
     """
     binary_labels = [
-        label for label in AVAILABLE_LABELS if LABEL_INFO[label]["type"] == "binary"
+        label for label in AVAILABLE_TASK_NAMES if get_task(label).task_type == "binary"
     ]
 
     # Count positives and negatives for each label
@@ -175,7 +175,7 @@ def plot_binary_label_distributions(
             label_counts[label][value] += 1
 
     # Create grouped bar chart
-    label_names = [LABEL_DISPLAY_NAMES.get(lbl, lbl) for lbl in binary_labels]
+    label_names = [get_task_display_name(lbl) for lbl in binary_labels]
     neg_counts = [label_counts[lbl][0] for lbl in binary_labels]
     pos_counts = [label_counts[lbl][1] for lbl in binary_labels]
 
@@ -224,7 +224,7 @@ def plot_label_cooccurrence(
         Matplotlib figure with co-occurrence heatmap.
     """
     binary_labels = [
-        label for label in AVAILABLE_LABELS if LABEL_INFO[label]["type"] == "binary"
+        label for label in AVAILABLE_TASK_NAMES if get_task(label).task_type == "binary"
     ]
 
     record_keys = {
@@ -250,7 +250,7 @@ def plot_label_cooccurrence(
                     if val_j == 1:
                         cooccurrence[i, j] += 1
 
-    label_names = [LABEL_DISPLAY_NAMES.get(lbl, lbl) for lbl in binary_labels]
+    label_names = [get_task_display_name(lbl) for lbl in binary_labels]
 
     fig, ax = plt.subplots(figsize=(10, 8))
     sns.heatmap(
@@ -363,12 +363,12 @@ def plot_samples_per_class(
         "narrowing": "narrowing",
     }
 
-    for label in AVAILABLE_LABELS:
-        info = LABEL_INFO[label]
+    for label in AVAILABLE_TASK_NAMES:
+        task = get_task(label)
         record_key = record_keys.get(label, label)
 
-        if info["type"] == "multiclass":
-            num_classes = info["num_classes"]
+        if task.task_type == "multiclass":
+            num_classes = task.num_classes
             # For Pfirrmann: values are 1-5, for Modic: 0-3
             if label == "pfirrmann":
                 class_values = list(range(1, num_classes + 1))
@@ -395,8 +395,8 @@ def plot_samples_per_class(
         if n_cols == 1:
             axes = axes[:, np.newaxis]
 
-        display_name = LABEL_DISPLAY_NAMES.get(label, label)
-        color = LABEL_COLORS.get(label, "#333333")
+        display_name = get_task_display_name(label)
+        color = get_task_color(label)
 
         fig.suptitle(f"{display_name} - Samples per Class Value", fontsize=14, fontweight="bold", color=color)
 

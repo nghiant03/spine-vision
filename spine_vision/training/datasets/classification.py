@@ -33,11 +33,8 @@ from sklearn.model_selection import StratifiedShuffleSplit
 from torch.utils.data import Dataset, WeightedRandomSampler
 from torchvision import transforms
 
-from spine_vision.datasets.labels import (
-    AVAILABLE_LABELS,
-    IDX_TO_LEVEL,
-    LABEL_INFO,
-)
+from spine_vision.core.tasks import AVAILABLE_TASK_NAMES, get_task
+from spine_vision.datasets.levels import IDX_TO_LEVEL
 
 
 def construct_3channel(
@@ -147,15 +144,15 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
 
         # Validate and store target labels
         if target_labels is not None:
-            invalid_labels = set(target_labels) - set(AVAILABLE_LABELS)
+            invalid_labels = set(target_labels) - set(AVAILABLE_TASK_NAMES)
             if invalid_labels:
                 raise ValueError(
                     f"Invalid target labels: {invalid_labels}. "
-                    f"Available labels: {AVAILABLE_LABELS}"
+                    f"Available labels: {AVAILABLE_TASK_NAMES}"
                 )
             self.target_labels = list(target_labels)
         else:
-            self.target_labels = list(AVAILABLE_LABELS)
+            self.target_labels = list(AVAILABLE_TASK_NAMES)
 
         # Load and process annotations
         self.records = self._load_and_pair_annotations()
@@ -337,9 +334,9 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
         # Multiclass labels: expanded to n_classes columns
         columns: list[tuple[str, int | None]] = []  # (label_name, class_idx or None)
         for label in self.target_labels:
-            info = LABEL_INFO[label]
-            if info["type"] == "multiclass":
-                for cls_idx in range(info["num_classes"]):
+            task = get_task(label)
+            if task.is_multiclass:
+                for cls_idx in range(task.num_classes):
                     columns.append((label, cls_idx))
             else:
                 columns.append((label, None))
@@ -871,8 +868,8 @@ class ClassificationCollator:
         targets_dict: dict[str, torch.Tensor] = {}
 
         for label in target_labels:
-            label_info = LABEL_INFO[label]
-            if label_info["type"] == "multiclass":
+            task = get_task(label)
+            if task.is_multiclass:
                 dtype = torch.long
             else:
                 dtype = torch.float32

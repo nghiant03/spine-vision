@@ -15,6 +15,12 @@ import torch
 from loguru import logger
 from torch.utils.data import DataLoader
 
+from spine_vision.core.tasks import (
+    AVAILABLE_TASK_NAMES,
+    TaskConfig,
+    get_strategy,
+    get_task,
+)
 from spine_vision.training.base import (
     BaseTrainer,
     TrainingConfig,
@@ -22,14 +28,13 @@ from spine_vision.training.base import (
     _create_worker_init_fn,
 )
 from spine_vision.training.datasets.classification import (
-    AVAILABLE_LABELS,
     ClassificationCollator,
     ClassificationDataset,
     DynamicTargets,
     create_weighted_sampler,
 )
 from spine_vision.training.metrics import ClassifierMetrics
-from spine_vision.training.models import Classifier, TaskConfig
+from spine_vision.training.models import Classifier
 from spine_vision.training.registry import register_trainer
 from spine_vision.visualization import (
     TrainingVisualizer,
@@ -37,106 +42,48 @@ from spine_vision.visualization import (
 )
 
 
-# Task configurations for all lumbar spine labels
-_ALL_TASK_CONFIGS: dict[str, TaskConfig] = {
-    "pfirrmann": TaskConfig(
-        name="pfirrmann",
-        num_classes=5,
-        task_type="multiclass",
-    ),
-    "modic": TaskConfig(
-        name="modic",
-        num_classes=4,
-        task_type="multiclass",
-    ),
-    "herniation": TaskConfig(
-        name="herniation",
-        num_classes=1,
-        task_type="binary",
-    ),
-    "bulging": TaskConfig(
-        name="bulging",
-        num_classes=1,
-        task_type="binary",
-    ),
-    "upper_endplate": TaskConfig(
-        name="upper_endplate",
-        num_classes=1,
-        task_type="binary",
-    ),
-    "lower_endplate": TaskConfig(
-        name="lower_endplate",
-        num_classes=1,
-        task_type="binary",
-    ),
-    "spondy": TaskConfig(
-        name="spondy",
-        num_classes=1,
-        task_type="binary",
-    ),
-    "narrowing": TaskConfig(
-        name="narrowing",
-        num_classes=1,
-        task_type="binary",
-    ),
-}
-
-
-def _create_lumbar_spine_tasks(
+def _create_tasks_for_training(
     target_labels: list[str] | None = None,
     label_smoothing: float = 0.1,
     use_focal_loss: bool = False,
     focal_gamma: float = 2.0,
     focal_alpha: float | None = None,
 ) -> list[TaskConfig]:
-    """Create lumbar spine classification tasks with optional filtering.
+    """Create task configs for training with optional training-time overrides.
 
     Args:
-        target_labels: List of label names to include. If None, includes all labels.
+        target_labels: List of label names to include. If None, includes all.
         label_smoothing: Label smoothing for multiclass tasks.
-        use_focal_loss: Use Focal Loss for binary tasks instead of BCE.
-        focal_gamma: Focusing parameter for Focal Loss (default: 2.0).
-        focal_alpha: Optional class weight for Focal Loss (default: None).
+        use_focal_loss: Use Focal Loss for binary tasks.
+        focal_gamma: Focusing parameter for Focal Loss.
+        focal_alpha: Optional class weight for Focal Loss.
 
     Returns:
-        List of TaskConfig for the selected lumbar spine classification tasks.
-
-    Raises:
-        ValueError: If any target_label is not a valid label name.
-
-    Note:
-        Class imbalance is handled via weighted sampling in the dataloader,
-        not via loss function weighting. focal_alpha is None by default
-        to avoid "double compensation" with the sampler.
+        List of TaskConfig with training-time settings applied.
     """
-    # Determine which labels to include
     if target_labels is None:
-        labels_to_use = list(AVAILABLE_LABELS)
+        labels_to_use = list(AVAILABLE_TASK_NAMES)
     else:
-        # Validate target labels
-        invalid_labels = set(target_labels) - set(AVAILABLE_LABELS)
-        if invalid_labels:
+        invalid = set(target_labels) - set(AVAILABLE_TASK_NAMES)
+        if invalid:
             raise ValueError(
-                f"Invalid target labels: {invalid_labels}. "
-                f"Available labels: {AVAILABLE_LABELS}"
+                f"Invalid target labels: {invalid}. Available: {AVAILABLE_TASK_NAMES}"
             )
         labels_to_use = target_labels
 
-    # Build task configs for selected labels
     tasks: list[TaskConfig] = []
     for label in labels_to_use:
-        base_config = _ALL_TASK_CONFIGS[label]
-        tasks.append(
-            TaskConfig(
-                name=base_config.name,
-                num_classes=base_config.num_classes,
-                task_type=base_config.task_type,
-                label_smoothing=label_smoothing if base_config.task_type == "multiclass" else 0.0,
-                use_focal_loss=use_focal_loss if base_config.task_type == "binary" else False,
-                focal_gamma=focal_gamma,
-                focal_alpha=focal_alpha,
-            )
-        )
+        task = get_task(label)
+        overrides: dict[str, Any] = {}
+
+        if task.is_multiclass:
+            overrides["label_smoothing"] = label_smoothing
+        elif task.is_binary:
+            overrides["use_focal_loss"] = use_focal_loss
+            overrides["focal_gamma"] = focal_gamma
+            overrides["focal_alpha"] = focal_alpha
+
+        tasks.append(task.with_overrides(**overrides) if overrides else task)
 
     return tasks
 
@@ -145,8 +92,7 @@ class ClassificationConfig(TrainingConfig):
     """Configuration for multi-task classification training.
 
     Supports training on all labels (multi-task) or individual labels (single-task)
-    via the `target_labels` option. When training single labels, only that label's
-    head is created and trained.
+    via the `target_labels` option.
 
     Example:
         # Train all labels (default multi-task)
@@ -161,12 +107,9 @@ class ClassificationConfig(TrainingConfig):
 
     task: str = "classification"
     data_path: Path = Path("data/processed/classification")
-    """Classification dataset path."""
 
     # Model configuration
     backbone: str = "resnet18"
-    """Backbone architecture (see BackboneFactory for options)."""
-
     pretrained: bool = True
     dropout: float = 0.3
     freeze_backbone_epochs: int = 0
@@ -176,82 +119,35 @@ class ClassificationConfig(TrainingConfig):
     """Use weighted sampling to handle class imbalance."""
 
     sampler_label: str | None = None
-    """Label to use for computing sample weights in weighted sampling.
-
-    If None, uses the first target label. Only used when use_weighted_sampling=True.
-    For single-task training, this is automatically set to the target label.
-    For multi-task training, you may want to specify which label to balance on.
-    """
+    """Label for computing sample weights. If None, uses first target label."""
 
     # Dataset configuration
     levels: list[str] | None = None
     """Filter to specific IVD levels."""
 
     series_types: list[str] | None = None
-    """Filter to specific series types (e.g., ["sag_t2"] for T2 only).
-
-    If None, requires both T1 and T2 images.
-    Options: "sag_t1", "sag_t2".
-
-    Examples:
-        - None: Use both T1 and T2 (default, creates [T2, T1, T2] channels)
-        - ["sag_t2"]: T2 only (creates [T2, T2, T2] channels)
-        - ["sag_t1"]: T1 only (creates [T1, T1, T1] channels)
-        - ["sag_t1", "sag_t2"]: Same as None
-    """
+    """Filter to specific series types (e.g., ["sag_t2"])."""
 
     target_labels: list[str] | None = None
-    """Filter to specific labels for training.
-
-    If None, trains on all 8 labels (multi-task learning).
-    If specified, only creates heads for the listed labels.
-
-    Available labels:
-        - pfirrmann: 5-class Pfirrmann grade (1-5)
-        - modic: 4-class Modic type (0-3)
-        - herniation: Binary disc herniation
-        - bulging: Binary disc bulging
-        - upper_endplate: Binary upper endplate defect
-        - lower_endplate: Binary lower endplate defect
-        - spondy: Binary spondylolisthesis
-        - narrowing: Binary disc narrowing
-    """
+    """Filter to specific labels for training. If None, trains on all."""
 
     output_size: tuple[int, int] = (256, 256)
-    """Final input size to model."""
-
     augment: bool = True
 
     # Loss configuration
     use_focal_loss: bool = False
-    """Use Focal Loss for binary tasks instead of BCE.
-
-    Focal loss down-weights well-classified examples and focuses on hard,
-    misclassified examples. This can be useful for imbalanced datasets.
-
-    Note: alpha is set to None by default to avoid "double compensation"
-    when using weighted sampling. Only the gamma parameter is exposed.
-    """
+    """Use Focal Loss for binary tasks."""
 
     focal_gamma: float = 2.0
-    """Focusing parameter for Focal Loss.
-
-    Higher values increase focus on hard examples. gamma=0 is equivalent
-    to standard BCE. Default: 2.0 (as recommended in the original paper).
-    """
+    """Focusing parameter for Focal Loss."""
 
     focal_alpha: float | None = None
-    """Optional class weight for Focal Loss.
-
-    If None (default), no class weighting is applied. Set to None to avoid
-    "double compensation" when using weighted sampling via use_weighted_sampling.
-    """
+    """Optional class weight for Focal Loss."""
 
     # Visualization
     visualize_predictions: bool = True
     num_visualization_samples: int = 16
     max_samples_per_cell: int = 4
-    """Maximum samples to display per confusion matrix cell."""
 
 
 @register_trainer("classification", config_cls=ClassificationConfig)
@@ -262,12 +158,6 @@ class ClassificationTrainer(
 
     Uses Classifier with configurable backbone and classification heads.
     Supports dual-modality input (T1 + T2 crops).
-
-    Uses training hooks:
-    - on_train_begin: Log dataset stats
-    - on_epoch_begin: Handle backbone unfreezing
-    - on_train_end: Generate final visualizations
-    - get_metric_for_checkpoint: Use macro_f1 (negated for lower-is-better)
     """
 
     def __init__(
@@ -278,7 +168,6 @@ class ClassificationTrainer(
         val_dataset: ClassificationDataset | None = None,
     ) -> None:
         """Initialize trainer."""
-        # Create datasets first to compute class weights
         if train_dataset is None:
             train_dataset = ClassificationDataset(
                 data_path=config.data_path,
@@ -304,18 +193,17 @@ class ClassificationTrainer(
             )
 
         # Determine which labels are being trained
-        target_labels = config.target_labels or list(AVAILABLE_LABELS)
+        target_labels = config.target_labels or list(AVAILABLE_TASK_NAMES)
 
         # Create weighted sampler for handling class imbalance
         self._sampler = None
         if config.use_weighted_sampling:
-            # Determine which label to use for sampling weights
             sampler_label = config.sampler_label or target_labels[0]
             self._sampler = create_weighted_sampler(train_dataset, sampler_label)
             logger.info(f"Using weighted sampling based on '{sampler_label}' label")
 
-        # Build tasks (no class weights - using weighted sampling instead)
-        tasks = _create_lumbar_spine_tasks(
+        # Build tasks with training-time settings
+        tasks = _create_tasks_for_training(
             target_labels=config.target_labels,
             label_smoothing=config.label_smoothing,
             use_focal_loss=config.use_focal_loss,
@@ -335,20 +223,16 @@ class ClassificationTrainer(
 
         super().__init__(config, model, train_dataset, val_dataset)
 
-        # Determine which labels are being trained
-        self._target_labels = config.target_labels or list(AVAILABLE_LABELS)
-
-        # Metrics (only for labels being trained)
+        self._target_labels = target_labels
+        self._tasks = tasks
         self.metrics = ClassifierMetrics(target_labels=self._target_labels)
 
-        # Visualizer
         self.visualizer = TrainingVisualizer(
             output_path=config.logs_path,
             output_mode="image",
             use_trackio=config.use_trackio,
         )
 
-        # Track backbone freeze state
         self._backbone_unfrozen = config.freeze_backbone_epochs == 0
 
     def _create_dataloader(
@@ -356,28 +240,11 @@ class ClassificationTrainer(
         dataset: ClassificationDataset,
         shuffle: bool = True,
     ) -> DataLoader[Any]:
-        """Create DataLoader with custom collator and deterministic worker seeding.
-
-        For training (shuffle=True), uses weighted sampler if available for handling
-        class imbalance. The sampler provides randomization, so shuffle is disabled.
-
-        Args:
-            dataset: The dataset to create a dataloader for.
-            shuffle: Whether to shuffle the data. For training, this indicates that
-                the weighted sampler should be used if available.
-
-        Returns:
-            DataLoader configured with appropriate settings.
-        """
-        # Create generator for reproducible shuffling
+        """Create DataLoader with custom collator."""
         generator = torch.Generator()
         generator.manual_seed(self.config.seed)
 
-        # Use sampler for training (shuffle=True) if available
-        # Sampler handles class-balanced randomization
         sampler = self._sampler if shuffle and self._sampler is not None else None
-
-        # When using a sampler, shuffle must be False (sampler handles randomization)
         effective_shuffle = False if sampler is not None else shuffle
 
         return DataLoader(
@@ -387,10 +254,10 @@ class ClassificationTrainer(
             sampler=sampler,
             num_workers=self.config.num_workers,
             pin_memory=self.config.pin_memory,
-            drop_last=shuffle,  # Still drop last batch for training
+            drop_last=shuffle,
             collate_fn=ClassificationCollator(),
             worker_init_fn=_create_worker_init_fn(self.config.seed),
-            generator=generator if sampler is None else None,  # Generator not used with sampler
+            generator=generator if sampler is None else None,
         )
 
     def _unpack_batch(
@@ -442,8 +309,6 @@ class ClassificationTrainer(
 
                 total_loss += loss.item()
                 num_batches += 1
-
-                # Update metrics
                 self.metrics.update(predictions, targets)
 
         avg_loss = total_loss / num_batches
@@ -456,7 +321,7 @@ class ClassificationTrainer(
         _: torch.Tensor,
         __: torch.Tensor,
     ) -> dict[str, float]:
-        """Compute metrics (placeholder for base class compatibility)."""
+        """Placeholder for base class compatibility."""
         return {}
 
     def _denormalize_images(self, images: torch.Tensor) -> list[np.ndarray]:
@@ -476,9 +341,8 @@ class ClassificationTrainer(
     # ==================== Training Hooks ====================
 
     def on_train_begin(self) -> None:
-        """Log dataset stats, target labels, and freeze info at training start."""
-        # Log target labels
-        if len(self._target_labels) == len(AVAILABLE_LABELS):
+        """Log dataset stats at training start."""
+        if len(self._target_labels) == len(AVAILABLE_TASK_NAMES):
             logger.info("Training on all labels (multi-task)")
         else:
             logger.info(f"Training on selected labels: {self._target_labels}")
@@ -490,8 +354,6 @@ class ClassificationTrainer(
 
         stats = self.train_dataset.get_stats()
         logger.info(f"Train dataset stats: {stats}")
-
-        # Visualize label distribution across splits
         self._visualize_label_distribution()
 
     def on_epoch_begin(self, epoch: int) -> None:
@@ -515,15 +377,9 @@ class ClassificationTrainer(
         val_loss: float | None,
         metrics: dict[str, float],
     ) -> float:
-        """Use F1 score for checkpointing (negated for lower-is-better).
-
-        Single-task: uses "f1"
-        Multi-task: uses "macro_f1"
-        """
-        # Single-task F1
+        """Use F1 score for checkpointing (negated for lower-is-better)."""
         if "f1" in metrics:
             return -metrics["f1"]
-        # Multi-task macro F1
         if "macro_f1" in metrics:
             return -metrics["macro_f1"]
         if val_loss is not None:
@@ -537,15 +393,13 @@ class ClassificationTrainer(
             filename="training_curves",
         )
 
-        # Visualize test samples with predictions if enabled
         if self.config.visualize_predictions:
             self._visualize_test_samples()
 
         logger.info(f"Visualizations saved to: {self.config.logs_path}")
 
     def _visualize_label_distribution(self) -> None:
-        """Visualize label distribution across train/val/test splits."""
-        # Create test dataset to get its distribution
+        """Visualize label distribution across splits."""
         test_dataset = ClassificationDataset(
             data_path=self.config.data_path,
             split="test",
@@ -557,26 +411,22 @@ class ClassificationTrainer(
             augment=False,
         )
 
-        # Collect distributions from all splits
         distributions: dict[str, dict[str, dict[int | str, int]]] = {
             "train": self.train_dataset.get_label_distribution(),
             "test": test_dataset.get_label_distribution(),
         }
 
-        # Add validation distribution if val_dataset exists
         if self.val_dataset is not None:
             distributions["val"] = self.val_dataset.get_label_distribution()
             val_size = len(self.val_dataset)
         else:
             val_size = 0
 
-        # Log sample counts
         logger.info(
             f"Split sizes - Train: {len(self.train_dataset)}, "
             f"Val: {val_size}, Test: {len(test_dataset)}"
         )
 
-        # Generate visualization
         self.visualizer.plot_label_distribution(
             distributions=distributions,
             target_labels=self._target_labels,
@@ -584,8 +434,7 @@ class ClassificationTrainer(
         )
 
     def _visualize_test_samples(self) -> None:
-        """Visualize a batch of test samples with predicted labels overlaid."""
-        # Create test dataset
+        """Visualize test samples with predictions."""
         test_dataset = ClassificationDataset(
             data_path=self.config.data_path,
             split="test",
@@ -609,17 +458,7 @@ class ClassificationTrainer(
         visualize: bool = False,
         max_samples_per_cell: int | None = None,
     ) -> dict[str, float]:
-        """Evaluate model on test set.
-
-        Args:
-            test_dataset: Optional test dataset. If None, creates from config.
-            visualize: If True, generate confusion matrix with samples visualizations.
-            max_samples_per_cell: Maximum samples per confusion matrix cell.
-                Defaults to config.max_samples_per_cell.
-
-        Returns:
-            Dictionary of evaluation metrics.
-        """
+        """Evaluate model on test set."""
         if test_dataset is None:
             test_dataset = ClassificationDataset(
                 data_path=self.config.data_path,
@@ -638,7 +477,6 @@ class ClassificationTrainer(
         self.model.eval()
         self.metrics.reset()
 
-        # For visualization - collect metadata only, load original images later
         all_predictions: dict[str, list[np.ndarray]] = {label: [] for label in self._target_labels}
         all_targets: dict[str, list[np.ndarray]] = {label: [] for label in self._target_labels}
         all_metadata: list[dict[str, Any]] = []
@@ -652,26 +490,16 @@ class ClassificationTrainer(
                 predictions = self.model(inputs)
                 self.metrics.update(predictions, targets)
 
-                # Collect metadata and predictions for visualization
                 if visualize and self.accelerator.is_main_process:
                     all_metadata.extend(metadata_list)
 
                     for label in self._target_labels:
                         if label in predictions:
                             pred_tensor = predictions[label]
-                            task_config = _ALL_TASK_CONFIGS.get(label)
-                            is_binary = task_config and task_config.task_type == "binary"
-
-                            if is_binary:
-                                # Binary: apply sigmoid to convert logits to probabilities
-                                pred_np = torch.sigmoid(pred_tensor).cpu().numpy()
-                            elif pred_tensor.dim() == 1:
-                                # 1D multiclass (unlikely but handle edge case)
-                                pred_np = pred_tensor.cpu().numpy()
-                            else:
-                                # Multiclass: apply softmax
-                                pred_np = torch.softmax(pred_tensor, dim=-1).cpu().numpy()
-                            all_predictions[label].extend(pred_np)
+                            task = get_task(label)
+                            strategy = get_strategy(task)
+                            probs = strategy.compute_probabilities(pred_tensor)
+                            all_predictions[label].extend(probs.cpu().numpy())
 
                         if label in targets:
                             target_tensor = getattr(targets, label)
@@ -683,14 +511,11 @@ class ClassificationTrainer(
         for key, value in sorted(metrics.items()):
             logger.info(f"  {key}: {value:.4f}")
 
-        # Log to trackio
         if self._trackio_initialized:
             trackio_metrics = {f"test/{key}": value for key, value in metrics.items()}
             self._log_to_trackio(trackio_metrics)
 
-        # Generate visualizations if requested
         if visualize and self.accelerator.is_main_process and all_metadata:
-            # Load all original images for confusion analysis
             all_original_images = load_classification_original_images(
                 data_path=self.config.data_path,
                 metadata_list=all_metadata,
@@ -699,18 +524,14 @@ class ClassificationTrainer(
             all_pred_arrays = {k: np.array(v) for k, v in all_predictions.items()}
             all_target_arrays = {k: np.array(v) for k, v in all_targets.items()}
 
-            # Determine max samples per cell
             samples_per_cell = max_samples_per_cell or self.config.max_samples_per_cell
 
-            # Plot per-label metrics
             self.visualizer.plot_classification_metrics(
                 metrics=metrics,
                 target_labels=self._target_labels,
                 filename="test_metrics",
             )
 
-            # Plot confusion matrices with samples for each label
-            # This replaces the old test_samples_with_labels and confusion_examples
             self.visualizer.plot_confusion_matrices_with_samples(
                 images=all_original_images,
                 predictions=all_pred_arrays,
@@ -721,7 +542,6 @@ class ClassificationTrainer(
                 filename_prefix="confusion_matrix_samples",
             )
 
-            # Plot confusion summary bar chart
             self.visualizer.plot_confusion_summary(
                 predictions=all_pred_arrays,
                 targets=all_target_arrays,

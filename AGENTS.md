@@ -3,7 +3,7 @@
 ## Project Overview
 
 Library for lumbar spine MRI dataset creation, model training, and result visualization. The project handles:
-- Dataset creation pipelines (nnUNet format, localization, classification datasets)
+- Dataset creation pipelines (localization, classification datasets)
 - OCR-based extraction of patient information from medical reports (for Phenikaa dataset)
 - Fuzzy matching of patient data across different data sources
 - Model training infrastructure with trackio integration
@@ -27,24 +27,25 @@ Library for lumbar spine MRI dataset creation, model training, and result visual
   - `pyyaml` - Label schema configuration
   - `rich` / `tqdm` - Progress bars and terminal output
   - `accelerate` - Distributed training and mixed precision
+  - `torchmetrics` - Metrics computation
 
 ## Commands
 
 ### Setup
 ```bash
-uv sync                    # Install dependencies
-uv sync --group dev        # Include dev dependencies (pandas-stubs, plotly-stubs)
+uv sync                         # Install dependencies
+uv sync --group dev             # Include dev dependencies (pandas-stubs, plotly-stubs)
+uv sync --group visualization   # Include visualization (seaborn, trackio)
 ```
 
 ### CLI Entry Points (after install)
 ```bash
-spine-vision dataset localization [OPTIONS]    # Create localization dataset
+spine-vision dataset localization [OPTIONS]    # Create localization dataset from RSNA + Lumbar Coords
 spine-vision dataset phenikaa [OPTIONS]        # Preprocess Phenikaa dataset (OCR + matching)
 spine-vision dataset classification [OPTIONS]  # Create classification dataset (Phenikaa + SPIDER)
 spine-vision train localization [OPTIONS]      # Train localization model (ConvNext)
-spine-vision train classification [OPTIONS]    # Train classification model (ResNet50-MTL)
+spine-vision train classification [OPTIONS]    # Train classification model (Multi-task)
 spine-vision test [OPTIONS]                    # Test trained models with images/DICOM
-spine-vision evaluate [OPTIONS]                # Evaluate on test set with visualization
 ```
 
 ### Running Scripts Directly
@@ -69,61 +70,64 @@ uv run ruff check --fix spine_vision
 ```
 spine-vision/
 ├── spine_vision/              # Main package
-│   ├── __init__.py
+│   ├── __init__.py            # Version string
 │   ├── core/                  # Core utilities
-│   │   ├── __init__.py        # BaseConfig, setup_logger, add_file_log
-│   │   └── logging.py         # Centralized logging setup
+│   │   ├── __init__.py        # Exports: BaseConfig, setup_logger, task system
+│   │   ├── config.py          # BaseConfig (Pydantic model)
+│   │   ├── logging.py         # Loguru setup with tqdm integration
+│   │   └── tasks.py           # TaskConfig, TASK_REGISTRY, strategies
 │   ├── io/                    # I/O utilities
 │   │   ├── __init__.py        # normalize_to_uint8 + re-exports
 │   │   ├── pdf.py             # PDF to image conversion
 │   │   ├── readers.py         # DICOM, NIfTI, MHA, NRRD readers
 │   │   ├── writers.py         # Format conversion & export
-│   │   └── tabular.py         # Excel/CSV handling
+│   │   └── tabular.py         # Excel/CSV handling, write_records_csv
 │   ├── datasets/              # Dataset creation pipelines
-│   │   ├── __init__.py
-│   │   ├── labels.py          # LabelSchema, remap_labels, load_label_schema
-│   │   ├── localization.py    # Localization dataset creation
-│   │   ├── classification.py  # Classification dataset (Phenikaa + SPIDER)
-│   │   ├── rsna.py            # RSNA dataset utilities (series mapping)
-│   │   ├── phenikaa/          # Phenikaa dataset preprocessing
-│   │   │   ├── __init__.py    # PreprocessConfig, main, report processors
-│   │   │   ├── ocr.py         # DocumentExtractor, TextDetector, TextRecognizer
-│   │   │   └── matching.py    # PatientMatcher, fuzzy_value_extract
-│   │   └── schemas/           # YAML label definitions
-│   │       └── spider.yaml    # SPIDER dataset labels
+│   │   ├── __init__.py        # All processor exports
+│   │   ├── base.py            # BaseProcessor, ProcessingResult
+│   │   ├── levels.py          # IVD level constants (LEVEL_TO_IDX, etc.)
+│   │   ├── localization.py    # LocalizationDatasetConfig, LocalizationDatasetProcessor
+│   │   ├── classification.py  # ClassificationDatasetConfig, ClassificationDatasetProcessor
+│   │   ├── rsna.py            # RSNA series mapping utilities
+│   │   └── phenikaa/          # Phenikaa dataset preprocessing
+│   │       ├── __init__.py    # PreprocessConfig, PhenikkaaProcessor
+│   │       ├── ocr.py         # DocumentExtractor, TextDetector, TextRecognizer
+│   │       └── matching.py    # PatientMatcher, fuzzy_value_extract
 │   ├── training/              # Training infrastructure
-│   │   ├── __init__.py
-│   │   ├── base.py            # BaseTrainer, BaseModel, TrainingConfig
-│   │   ├── heads.py           # Configurable head architectures
-│   │   ├── metrics.py         # BaseMetrics, LocalizationMetrics, MTLClassificationMetrics
-│   │   ├── registry.py        # ModelRegistry, TrainerRegistry
-│   │   ├── visualization/     # Visualization utilities
-│   │   │   ├── __init__.py    # Exports for visualization module
-│   │   │   ├── base.py        # Base utilities and constants
-│   │   │   ├── training.py    # Training curves plotting
-│   │   │   ├── localization.py # Localization prediction visualization
-│   │   │   ├── classification.py # Classification prediction visualization
-│   │   │   ├── dataset.py     # Dataset statistics visualization (Plotly)
-│   │   │   └── visualizer.py  # TrainingVisualizer, DatasetVisualizer classes
-│   │   ├── datasets/          # PyTorch datasets for training
-│   │   │   ├── __init__.py
-│   │   │   ├── localization.py # LocalizationDataset
-│   │   │   └── classification.py # ClassificationDataset, ClassificationCollator
+│   │   ├── __init__.py        # All training exports
+│   │   ├── base.py            # BaseTrainer, BaseModel, TrainingConfig, TrainingResult
+│   │   ├── heads.py           # HeadConfig, HeadFactory, MLPHead, etc.
+│   │   ├── losses.py          # FocalLoss
+│   │   ├── metrics.py         # LocalizationMetrics, ClassifierMetrics
+│   │   ├── registry.py        # ModelRegistry, TrainerRegistry, MetricsRegistry
 │   │   ├── models/            # Model architectures
+│   │   │   ├── __init__.py    # Model exports
+│   │   │   ├── backbone.py    # BackboneFactory, BACKBONES dict (~40 options)
+│   │   │   └── generic.py     # Classifier, CoordinateRegressor
+│   │   ├── trainers/          # Task-specific trainers
 │   │   │   ├── __init__.py
-│   │   │   ├── backbone.py    # Backbone utilities
-│   │   │   └── generic.py     # CoordinateRegressor, MTLClassifier
-│   │   └── trainers/          # Task-specific trainers
+│   │   │   ├── localization.py  # LocalizationTrainer, LocalizationConfig
+│   │   │   └── classification.py # ClassificationTrainer, ClassificationConfig
+│   │   └── datasets/          # PyTorch datasets for training
 │   │       ├── __init__.py
-│   │       ├── localization.py # LocalizationTrainer, LocalizationConfig
-│   │       └── classification.py # ClassificationTrainer, ClassificationConfig
+│   │       ├── localization.py  # LocalizationDataset, LocalizationCollator
+│   │       └── classification.py # ClassificationDataset, ClassificationCollator, DynamicTargets
+│   ├── visualization/         # Visualization utilities
+│   │   ├── __init__.py        # All visualization exports
+│   │   ├── base.py            # save_figure, load_original_images
+│   │   ├── training.py        # plot_training_curves
+│   │   ├── localization.py    # plot_localization_predictions, plot_error_distribution
+│   │   ├── classification.py  # plot_confusion_matrix_with_samples, etc.
+│   │   ├── dataset.py         # plot_dataset_statistics, plot_label_cooccurrence
+│   │   └── visualizer.py      # TrainingVisualizer, DatasetVisualizer classes
 │   └── cli/                   # Unified CLI with subcommands
-│       ├── __init__.py        # Main entry point (dataset, train, test, evaluate)
-│       ├── evaluate.py        # Model evaluation command
-│       ├── test.py            # Model testing command
-│       └── train.py           # Training command entry point
-├── data/                      # (gitignored) Data directories
-├── weights/                   # (gitignored) Model weights
+│       ├── __init__.py        # Main entry point (cli function)
+│       ├── train.py           # Training command entry point
+│       └── test.py            # Testing/inference command
+├── notebooks/                 # Jupyter notebooks for analysis
+├── output/                    # Generated outputs (gitignored)
+├── data/                      # Data directories (gitignored)
+├── weights/                   # Model weights (gitignored)
 └── pyproject.toml
 ```
 
@@ -135,6 +139,48 @@ from spine_vision.core import setup_logger, add_file_log, BaseConfig
 
 setup_logger(verbose=True)
 add_file_log(log_path=Path("logs"))
+```
+
+### Task System (`spine_vision.core.tasks`)
+```python
+from spine_vision.core.tasks import (
+    # Core types
+    TaskConfig, TaskType, TaskStrategy,
+    # Registry
+    TASK_REGISTRY, AVAILABLE_TASK_NAMES,
+    get_task, get_tasks, register_task,
+    # Strategies
+    get_strategy, BinaryStrategy, MulticlassStrategy, OrdinalStrategy,
+    # Helpers
+    create_loss_functions, compute_predictions_for_tasks,
+    get_task_display_name, get_task_color,
+)
+
+# Get a task configuration
+task = get_task("pfirrmann")  # TaskConfig
+print(task.num_classes)        # 5
+print(task.task_type)          # "multiclass"
+print(task.display_name)       # "Pfirrmann Grade"
+
+# Override training-specific settings (immutable, returns new copy)
+task_with_smoothing = task.with_overrides(
+    label_smoothing=0.1,
+    loss_weight=2.0,
+)
+
+# Use strategy for task-type-specific behavior
+strategy = get_strategy(task)
+loss_fn = strategy.get_loss_fn(task)
+preds = strategy.compute_predictions(logits)
+metrics = strategy.get_metrics(task)
+
+# Create loss functions for multiple tasks
+tasks = get_tasks(["pfirrmann", "herniation", "modic"])
+loss_fns, loss_weights = create_loss_functions(tasks)
+
+# Visualization helpers
+display = get_task_display_name("pfirrmann")  # "Pfirrmann Grade"
+color = get_task_color("herniation")           # "#2ca02c"
 ```
 
 ### I/O (`spine_vision.io`)
@@ -226,19 +272,19 @@ from spine_vision.training import (
     # Datasets
     LocalizationDataset, ClassificationDataset,
     # Models
-    CoordinateRegressor, MTLClassifier,
+    CoordinateRegressor, Classifier,
     # Trainers
     LocalizationConfig, LocalizationTrainer,
     ClassificationConfig, ClassificationTrainer,
     # Metrics & Visualization
-    BaseMetrics, LocalizationMetrics, MTLClassificationMetrics,
+    LocalizationMetrics, ClassifierMetrics,
     TrainingVisualizer, DatasetVisualizer,
 )
 
 # Training localization model
 config = LocalizationConfig(
     data_path=Path("data/processed/localization"),
-    model_variant="base",
+    backbone="convnext_base",
     batch_size=32,
     num_epochs=100,
     use_trackio=True,
@@ -273,13 +319,10 @@ metrics = trainer.evaluate(visualize=True)
 | `--image-fuzzy-threshold` | Folder matching threshold | `85` |
 | `--pdf-dpi` | DPI for PDF rendering | `200` |
 
-### spine-vision dataset nnunet
+### spine-vision dataset localization
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--input-path` | Source dataset directory | `data/raw/SPIDER` |
-| `--output-path` | nnUNet output directory | `data/processed/SPIDER/Dataset501_Spider` |
-| `--schema-path` | Label schema YAML (optional) | Built-in `spider` |
-| `--channel-name` | Channel name in dataset.json | `MRI` |
+| `--base-path` | Base data directory | `data` |
 | `-v, --verbose` | Debug logging | `False` |
 
 ### spine-vision dataset classification
@@ -297,7 +340,11 @@ metrics = trainer.evaluate(visualize=True)
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--data-path` | Localization dataset path | `data/processed/localization` |
-| `--model-variant` | ConvNext variant | `base` |
+| `--backbone` | Backbone model name (see BACKBONES) | `convnext_base` |
+| `--image-size` | Input image size | `(512, 512)` |
+| `--num-levels` | Number of IVD levels to predict | `5` |
+| `--loss-type` | Loss function: mse, smooth_l1, huber | `mse` |
+| `--freeze-backbone-epochs` | Epochs to freeze backbone | `0` |
 | `--batch-size` | Training batch size | `32` |
 | `--num-epochs` | Number of training epochs | `100` |
 | `--learning-rate` | Learning rate | `1e-4` |
@@ -308,28 +355,105 @@ metrics = trainer.evaluate(visualize=True)
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--data-path` | Classification dataset path | `data/processed/classification` |
-| `--output-size` | Final input size to model (H W) | `224 224` |
+| `--backbone` | Backbone model name | `resnet18` |
+| `--output-size` | Final input size to model (H W) | `(256, 256)` |
 | `--target-labels` | Filter to specific labels | None (all) |
+| `--series-types` | Filter to T1, T2, or both | None (all) |
+| `--use-weighted-sampling` | Enable weighted sampling | `True` |
+| `--use-focal-loss` | Use focal loss | `False` |
+| `--focal-gamma` | Focal loss gamma | `2.0` |
 | `--dropout` | Dropout rate | `0.3` |
 | `--use-trackio` | Enable trackio logging | `False` |
 | `-v, --verbose` | Debug logging | `False` |
 
-## Adding New Components
+### TrainingConfig (base for all trainers)
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--batch-size` | Training batch size | `32` |
+| `--num-epochs` | Number of training epochs | `15` |
+| `--learning-rate` | Learning rate | `1e-4` |
+| `--weight-decay` | Weight decay | `1e-5` |
+| `--scheduler-type` | LR scheduler: cosine, step, plateau, none | `cosine` |
+| `--early-stopping` | Enable early stopping | `True` |
+| `--patience` | Early stopping patience | `20` |
+| `--mixed-precision` | Enable mixed precision training | `True` |
 
-### New Label Schema
-Create `spine_vision/datasets/schemas/my_dataset.yaml`:
-```yaml
-name: MyDataset
-source_labels:
-  background: 0
-  vertebra: 1
-target_labels:
-  background: 0
-  vertebra: 1
-mapping:
-  0: 0
-  1: 1
-```
+## Major Classes
+
+### Core Layer
+| Class | Purpose |
+|-------|---------|
+| `BaseConfig` | Pydantic base configuration with verbose, file logging options |
+| `setup_logger()` | Configure loguru with tqdm integration |
+| `add_file_log()` | Add rotating file log handler |
+
+### Dataset Processing
+| Class | Purpose |
+|-------|---------|
+| `BaseProcessor` | Abstract base for dataset processors |
+| `ProcessingResult` | Container for processing statistics |
+| `LocalizationDatasetProcessor` | Creates localization dataset from RSNA + Lumbar Coords |
+| `ClassificationDatasetProcessor` | Creates cropped IVD images from Phenikaa + SPIDER |
+| `PhenikkaaProcessor` | OCR extraction + patient matching |
+| `PatientMatcher` | Fuzzy matching of patient data to image folders |
+| `DocumentExtractor` | PaddleOCR + VietOCR text extraction |
+
+### Training Infrastructure
+| Class | Purpose |
+|-------|---------|
+| `TrainingConfig` | Base training config (lr, epochs, batch_size, etc.) |
+| `TrainingResult` | Container for training results |
+| `BaseModel` | Abstract base for models (forward, get_loss, predict, test_inference) |
+| `BaseTrainer` | Abstract trainer with Accelerate + hooks |
+| `BackboneFactory` | Creates timm backbones by name |
+| `HeadFactory` | Creates configurable head architectures |
+| `FocalLoss` | Focal loss for imbalanced binary classification |
+
+### Models
+| Class | Purpose |
+|-------|---------|
+| `CoordinateRegressor` | Backbone + regression head for IVD localization (outputs [B, 5, 2]) |
+| `Classifier` | Backbone + multi-task heads for classification |
+
+### Trainers
+| Class | Purpose |
+|-------|---------|
+| `LocalizationTrainer` | Trainer for coordinate regression |
+| `ClassificationTrainer` | Trainer for multi-task classification |
+
+### Training Datasets
+| Class | Purpose |
+|-------|---------|
+| `LocalizationDataset` | Loads images + all 5 IVD coordinates per image |
+| `ClassificationDataset` | Loads IVD crops with T1/T2 pairing |
+| `DynamicTargets` | Flexible container for any subset of target labels |
+| `create_weighted_sampler()` | Creates WeightedRandomSampler for class imbalance |
+
+### Task System
+| Class | Purpose |
+|-------|---------|
+| `TaskConfig` | Immutable config for classification task (name, num_classes, task_type, etc.) |
+| `TaskStrategy` | ABC for task-type-specific behavior (loss, predictions, metrics) |
+| `BinaryStrategy` | Strategy for binary tasks (BCEWithLogitsLoss, sigmoid) |
+| `MulticlassStrategy` | Strategy for multiclass tasks (CrossEntropyLoss, softmax) |
+| `OrdinalStrategy` | Strategy for ordinal tasks (CE + MAE metric) |
+| `TASK_REGISTRY` | Dict of 8 predefined tasks (pfirrmann, modic, herniation, etc.) |
+| `get_task()` | Get TaskConfig by name |
+| `get_strategy()` | Get TaskStrategy for a task/type |
+
+### Metrics
+| Class | Purpose |
+|-------|---------|
+| `LocalizationMetrics` | MED, MAE, PCK metrics with per-level breakdown |
+| `ClassifierMetrics` | Multi-task metrics aggregator (overall_accuracy, macro_f1) |
+
+### Visualization
+| Class | Purpose |
+|-------|---------|
+| `TrainingVisualizer` | Training curves, predictions, confusion matrices |
+| `DatasetVisualizer` | Dataset statistics, distributions |
+
+## Adding New Components
 
 ### New Dataset Pipeline
 Add a new dataset module in `spine_vision/datasets/`:
@@ -365,24 +489,9 @@ class MyDatasetProcessor(BaseProcessor[MyDatasetConfig]):
 
         self.on_process_end(result)
         return result
-
-def main(config: MyDatasetConfig) -> None:
-    """Convenience wrapper for backward compatibility."""
-    processor = MyDatasetProcessor(config)
-    result = processor.process()
-    logger.info(result.summary)
 ```
 
-Then register it in `spine_vision/cli/__init__.py`:
-```python
-from spine_vision.datasets.my_dataset import MyDatasetConfig, MyDatasetProcessor
-
-# In cli() function:
-case MyDatasetConfig():
-    processor = MyDatasetProcessor(cmd)
-    result = processor.process()
-    logger.info(result.summary)
-```
+Then register it in `spine_vision/cli/__init__.py`.
 
 ### New Training Model
 ```python
@@ -417,8 +526,22 @@ class MyModel(BaseModel):
 5. **Birthday parsing**: Expects `DD/MM/YYYY` format in OCR output
 6. **nnUNet source**: Installed from GitHub via uv sources
 7. **Training backend**: Uses HuggingFace Accelerate for distributed training
-8. **Model backbones**: Uses timm for pretrained models
+8. **Model backbones**: Uses timm for pretrained models (~40 options in BACKBONES)
 9. **Trackio logging**: Optional integration for experiment tracking
+10. **IVD Level Conventions**:
+    - SPIDER: L5/S1=1, L1/L2=5 (bottom to top)
+    - Phenikaa: L1/L2=1, L5/S1=5 (top to bottom)
+    - Dataset converts SPIDER to Phenikaa convention
+11. **Pfirrmann Grades**: 1-5 in CSV, converted to 0-4 for CrossEntropy
+12. **3-Channel Input**: Classification uses [T2, T1, T2] or single-modality triplicate
+13. **Crop Coordinates in mm**: `crop_delta_mm` in mm, converted to pixels using image spacing
+14. **Crop Modes**: "horizontal" (axis-aligned) or "rotated" (spine-aligned)
+15. **Weighted Sampling**: Default for handling class imbalance (not loss weighting)
+16. **Backbone Freezing**: Optional via `freeze_backbone_epochs`
+17. **Checkpoint Selection**:
+    - Localization: MED (lower is better)
+    - Classification: F1/macro_F1 (negated for lower-is-better)
+18. **Isotropic Resampling**: 0.3mm spacing for consistent cropping
 
 ## Testing
 

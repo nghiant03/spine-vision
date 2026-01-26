@@ -8,7 +8,11 @@ import numpy as np
 import seaborn as sns
 from matplotlib.figure import Figure
 
-from spine_vision.datasets.labels import LABEL_COLORS, LABEL_DISPLAY_NAMES
+from spine_vision.core.tasks import (
+    AVAILABLE_TASK_NAMES,
+    get_task_color,
+    get_task_display_name,
+)
 from spine_vision.visualization.base import (
     CONFUSION_COLORS,
     SPLIT_COLORS,
@@ -63,7 +67,7 @@ def plot_classification_predictions(
             is_correct = pred_val == gt_val
             if not is_correct:
                 all_correct = False
-            display_name = LABEL_DISPLAY_NAMES.get(label, label)
+            display_name = get_task_display_name(label)
             status = "\u2713" if is_correct else "\u2717"
             annotations.append(f"{display_name}: {pred_val} ({gt_val}) {status}")
 
@@ -118,7 +122,7 @@ def plot_classification_metrics(
         Matplotlib Figure.
     """
     metric_types = ["accuracy", "f1", "precision", "recall"]
-    labels = target_labels or list(LABEL_DISPLAY_NAMES.keys())
+    labels = target_labels or list(AVAILABLE_TASK_NAMES)
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     axes = axes.flatten()
@@ -134,8 +138,8 @@ def plot_classification_metrics(
             key = f"{label}_{metric_type}"
             if key in metrics:
                 values.append(metrics[key])
-                label_names.append(LABEL_DISPLAY_NAMES.get(label, label))
-                colors.append(LABEL_COLORS.get(label, "#333333"))
+                label_names.append(get_task_display_name(label))
+                colors.append(get_task_color(label))
 
         if values:
             bars = ax.bar(label_names, values, color=colors)
@@ -237,7 +241,7 @@ def plot_confusion_matrix_with_samples(
         ax.axis("off")
         return fig
 
-    display_name = LABEL_DISPLAY_NAMES.get(target_label, target_label)
+    display_name = get_task_display_name(target_label)
     n_cell_rows = len(non_empty_cells)
     n_rows = 1 + n_cell_rows
 
@@ -374,7 +378,7 @@ def plot_test_samples_with_labels(
             pred_val, gt_val = extract_prediction_value(predictions[label][i], targets[label][i])
             if pred_val == gt_val:
                 n_correct += 1
-            display_name = LABEL_DISPLAY_NAMES.get(label, label)[:3]
+            display_name = get_task_display_name(label)[:3]
             pred_lines.append(f"{display_name}:{pred_val}")
             gt_lines.append(f"{display_name}:{gt_val}")
 
@@ -539,7 +543,7 @@ def plot_confusion_examples(
                 count = mask.sum()
                 ax.set_title(f"{cat_name} ({count} total)", fontsize=9, loc="left")
 
-    display_name = LABEL_DISPLAY_NAMES.get(target_label, target_label)
+    display_name = get_task_display_name(target_label)
     fig.suptitle(f"Confusion Examples for {display_name}", fontsize=12, fontweight="bold")
     plt.tight_layout()
 
@@ -610,7 +614,7 @@ def plot_confusion_summary(
         tn_counts.append(tn)
         fp_counts.append(fp)
         fn_counts.append(fn)
-        label_names.append(LABEL_DISPLAY_NAMES.get(label, label))
+        label_names.append(get_task_display_name(label))
 
     x = np.arange(len(label_names))
     width = 0.2
@@ -707,7 +711,7 @@ def plot_label_distribution(
 
         ax.set_xlabel("Class")
         ax.set_ylabel("Count")
-        ax.set_title(LABEL_DISPLAY_NAMES.get(label, label))
+        ax.set_title(get_task_display_name(label))
         ax.set_xticks(x)
         ax.set_xticklabels(class_names)
         if idx == 0:

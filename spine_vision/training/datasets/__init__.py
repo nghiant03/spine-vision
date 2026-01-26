@@ -3,7 +3,7 @@
 Provides PyTorch Dataset implementations for various training tasks.
 """
 
-from spine_vision.datasets.labels import AVAILABLE_LABELS, LABEL_INFO
+from spine_vision.core.tasks import AVAILABLE_TASK_NAMES, get_task
 from spine_vision.training.datasets.classification import (
     ClassificationCollator,
     ClassificationDataset,
@@ -22,6 +22,6 @@ __all__ = [
     "ClassificationCollator",
     "DynamicTargets",
     "create_weighted_sampler",
-    "AVAILABLE_LABELS",
-    "LABEL_INFO",
+    "AVAILABLE_TASK_NAMES",
+    "get_task",
 ]

@@ -23,26 +23,23 @@ Use `list_backbones()` to see all available backbones:
 from spine_vision.training.models import (
     Classifier,
     CoordinateRegressor,
-    TaskConfig,
     list_backbones,
 )
+from spine_vision.core.tasks import TaskConfig, get_task, get_tasks
 
 # Single-task classifier
 model = Classifier(
     backbone="resnet50",
-    tasks=[TaskConfig(name="grade", num_classes=5)],
+    tasks=[TaskConfig(name="grade", num_classes=5, task_type="multiclass")],
 )
 output = model(images)  # {"grade": logits}
 
-# Multi-task classifier
+# Multi-task classifier with predefined tasks
 model = Classifier(
     backbone="convnext_base",
-    tasks=[
-        TaskConfig(name="grade", num_classes=5, task_type="multiclass"),
-        TaskConfig(name="herniation", num_classes=1, task_type="binary"),
-    ],
+    tasks=get_tasks(["pfirrmann", "herniation"]),
 )
-output = model(images)  # {"grade": logits, "herniation": logits}
+output = model(images)  # {"pfirrmann": logits, "herniation": logits}
 
 # Coordinate regressor for localization
 model = CoordinateRegressor(
@@ -57,6 +54,13 @@ print(list_backbones("resnet"))  # ResNet family only
 ```
 """
 
+from spine_vision.core.tasks import (
+    AVAILABLE_TASK_NAMES,
+    TASK_REGISTRY,
+    TaskConfig,
+    get_task,
+    get_tasks,
+)
 from spine_vision.training.models.backbone import (
     BACKBONES,
     BackboneFactory,
@@ -65,9 +69,6 @@ from spine_vision.training.models.backbone import (
 from spine_vision.training.models.generic import (
     Classifier,
     CoordinateRegressor,
-    LUMBAR_SPINE_TASKS,
-    MTLTargets,
-    TaskConfig,
     list_backbones,
 )
 
@@ -75,10 +76,12 @@ __all__ = [
     # Models
     "Classifier",
     "CoordinateRegressor",
-    # Task configuration
+    # Task configuration (re-exported from core.tasks for convenience)
     "TaskConfig",
-    "LUMBAR_SPINE_TASKS",
-    "MTLTargets",
+    "TASK_REGISTRY",
+    "AVAILABLE_TASK_NAMES",
+    "get_task",
+    "get_tasks",
     # Backbone utilities
     "BackboneFactory",
     "BACKBONES",
