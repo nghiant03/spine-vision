@@ -83,7 +83,8 @@ def process_spider(
 
     # Cache: key -> (middle_slice, ivd_locations, spacing_2d)
     processed_images: dict[
-        tuple[int, str], tuple[np.ndarray, dict[int, tuple[float, float]], tuple[float, float]]
+        tuple[int, str],
+        tuple[np.ndarray, dict[int, tuple[float, float]], tuple[float, float]],
     ] = {}
 
     for patient_id, levels in tqdm(
@@ -122,7 +123,11 @@ def process_spider(
                         ivd_locations = get_center_fallback_locations()
 
                     spacing_2d = get_slice_spacing(image)
-                    processed_images[cache_key] = (middle_slice, ivd_locations, spacing_2d)
+                    processed_images[cache_key] = (
+                        middle_slice,
+                        ivd_locations,
+                        spacing_2d,
+                    )
                 except Exception as e:
                     logger.debug(f"Error processing {image_file}: {e}")
                     continue

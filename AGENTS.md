@@ -553,7 +553,7 @@ class MyModel(BaseModel):
 
 No test suite currently configured.
 
-## Type Checking
+## Type Checking (REQUIRED)
 
 ```bash
 uv run pyright spine_vision
@@ -563,6 +563,7 @@ uv run pyright spine_vision
 
 ```bash
 uv run ruff check --fix spine_vision
+uv run ruff format spine_vision
 ```
 
 > Agents MUST run this command after modifying any Python files.

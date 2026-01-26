@@ -67,7 +67,9 @@ def extract_prediction_value(pred: Any, gt: Any) -> tuple[int, int]:
             gt_val = safe_to_int(gt)
         else:
             gt_arr = np.atleast_1d(gt)
-            gt_val = int(np.argmax(gt_arr)) if len(gt_arr) > 1 else safe_to_int(gt_arr[0])
+            gt_val = (
+                int(np.argmax(gt_arr)) if len(gt_arr) > 1 else safe_to_int(gt_arr[0])
+            )
         return pred_val, gt_val
     return safe_to_int(pred), safe_to_int(gt)
 
@@ -120,7 +122,9 @@ def load_original_images(
         elif img.mode != "RGB":
             img = img.convert("RGB")
         if output_size is not None:
-            img = img.resize((output_size[1], output_size[0]), Image.Resampling.BILINEAR)
+            img = img.resize(
+                (output_size[1], output_size[0]), Image.Resampling.BILINEAR
+            )
         images.append(np.array(img))
     return images
 
@@ -160,12 +164,18 @@ def load_classification_original_images(
             if grayscale_display:
                 rgb_image = np.stack([t2_img, t2_img, t2_img], axis=-1)
             else:
-                t1_img = np.array(Image.open(t1_path).convert("L")) if t1_path.exists() else t2_img
+                t1_img = (
+                    np.array(Image.open(t1_path).convert("L"))
+                    if t1_path.exists()
+                    else t2_img
+                )
                 rgb_image = np.stack([t2_img, t1_img, t2_img], axis=-1)
 
             if output_size is not None:
                 pil_img = Image.fromarray(rgb_image)
-                pil_img = pil_img.resize((output_size[1], output_size[0]), Image.Resampling.BILINEAR)
+                pil_img = pil_img.resize(
+                    (output_size[1], output_size[0]), Image.Resampling.BILINEAR
+                )
                 rgb_image = np.array(pil_img)
             images.append(rgb_image)
         else:
@@ -202,7 +212,8 @@ def create_grid_axes(
     n_rows = (n_items + n_cols - 1) // n_cols
 
     fig, axes = plt.subplots(
-        n_rows, n_cols,
+        n_rows,
+        n_cols,
         figsize=(figsize_per_item[0] * n_cols, figsize_per_item[1] * n_rows),
         squeeze=False,
     )

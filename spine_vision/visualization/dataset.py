@@ -90,8 +90,14 @@ def plot_dataset_statistics(
     ax1.set_xlabel("IVD Level")
     ax1.set_ylabel("Count")
     for bar, count in zip(bars1, level_counts):
-        ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5, str(count),
-                 ha="center", va="bottom", fontsize=9)
+        ax1.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 5,
+            str(count),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     # Source distribution (pie chart)
     ax2 = axes[0, 1]
@@ -110,13 +116,21 @@ def plot_dataset_statistics(
     pfirrmann = stats["pfirrmann"]
     pfirrmann_labels = [f"Grade {i}" for i in range(1, 6)]
     pfirrmann_counts = [pfirrmann.get(i, 0) for i in range(1, 6)]
-    bars3 = ax3.bar(pfirrmann_labels, pfirrmann_counts, color="#9b59b6", edgecolor="white")
+    bars3 = ax3.bar(
+        pfirrmann_labels, pfirrmann_counts, color="#9b59b6", edgecolor="white"
+    )
     ax3.set_title("Pfirrmann Grade Distribution")
     ax3.set_xlabel("Grade")
     ax3.set_ylabel("Count")
     for bar, count in zip(bars3, pfirrmann_counts):
-        ax3.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5, str(count),
-                 ha="center", va="bottom", fontsize=9)
+        ax3.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 5,
+            str(count),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     # Modic distribution
     ax4 = axes[1, 1]
@@ -128,8 +142,14 @@ def plot_dataset_statistics(
     ax4.set_xlabel("Type")
     ax4.set_ylabel("Count")
     for bar, count in zip(bars4, modic_counts):
-        ax4.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 5, str(count),
-                 ha="center", va="bottom", fontsize=9)
+        ax4.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 5,
+            str(count),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     plt.tight_layout()
     save_figure(fig, output_path, "dataset_statistics", output_mode)
@@ -156,7 +176,9 @@ def plot_binary_label_distributions(
     ]
 
     # Count positives and negatives for each label
-    label_counts: dict[str, dict[int, int]] = {label: {0: 0, 1: 0} for label in binary_labels}
+    label_counts: dict[str, dict[int, int]] = {
+        label: {0: 0, 1: 0} for label in binary_labels
+    }
 
     # Map from label name to record key
     record_keys = {
@@ -183,8 +205,22 @@ def plot_binary_label_distributions(
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    bars1 = ax.bar(x - width / 2, neg_counts, width, label="Negative (0)", color="#2ecc71", edgecolor="white")
-    bars2 = ax.bar(x + width / 2, pos_counts, width, label="Positive (1)", color="#e74c3c", edgecolor="white")
+    bars1 = ax.bar(
+        x - width / 2,
+        neg_counts,
+        width,
+        label="Negative (0)",
+        color="#2ecc71",
+        edgecolor="white",
+    )
+    bars2 = ax.bar(
+        x + width / 2,
+        pos_counts,
+        width,
+        label="Positive (1)",
+        color="#e74c3c",
+        edgecolor="white",
+    )
 
     ax.set_title("Binary Label Distributions", fontsize=14, fontweight="bold")
     ax.set_xlabel("Label")
@@ -196,12 +232,24 @@ def plot_binary_label_distributions(
     # Add value labels
     for bar in bars1:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width() / 2, height + 5, str(int(height)),
-                ha="center", va="bottom", fontsize=8)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            height + 5,
+            str(int(height)),
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
     for bar in bars2:
         height = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width() / 2, height + 5, str(int(height)),
-                ha="center", va="bottom", fontsize=8)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            height + 5,
+            str(int(height)),
+            ha="center",
+            va="bottom",
+            fontsize=8,
+        )
 
     plt.tight_layout()
     save_figure(fig, output_path, "binary_label_distributions", output_mode)
@@ -264,7 +312,9 @@ def plot_label_cooccurrence(
         square=True,
         cbar_kws={"shrink": 0.8},
     )
-    ax.set_title("Binary Label Co-occurrence (Both Positive)", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Binary Label Co-occurrence (Both Positive)", fontsize=14, fontweight="bold"
+    )
     ax.set_xlabel("Label")
     ax.set_ylabel("Label")
 
@@ -310,13 +360,28 @@ def plot_pfirrmann_by_level(
     for grade_idx, grade in enumerate(range(1, 6)):
         counts = [level_pfirrmann[lvl][grade] for lvl in levels]
         offset = (grade_idx - 2) * width
-        bars = ax.bar(x + offset, counts, width, label=f"Grade {grade}", color=colors[grade_idx], edgecolor="white")
+        bars = ax.bar(
+            x + offset,
+            counts,
+            width,
+            label=f"Grade {grade}",
+            color=colors[grade_idx],
+            edgecolor="white",
+        )
         for bar, count in zip(bars, counts):
             if count > 0:
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 2, str(count),
-                        ha="center", va="bottom", fontsize=7)
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 2,
+                    str(count),
+                    ha="center",
+                    va="bottom",
+                    fontsize=7,
+                )
 
-    ax.set_title("Pfirrmann Grade Distribution by IVD Level", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Pfirrmann Grade Distribution by IVD Level", fontsize=14, fontweight="bold"
+    )
     ax.set_xlabel("IVD Level")
     ax.set_ylabel("Count")
     ax.set_xticks(x)
@@ -398,9 +463,16 @@ def plot_samples_per_class(
         display_name = get_task_display_name(label)
         color = get_task_color(label)
 
-        fig.suptitle(f"{display_name} - Samples per Class Value", fontsize=14, fontweight="bold", color=color)
+        fig.suptitle(
+            f"{display_name} - Samples per Class Value",
+            fontsize=14,
+            fontweight="bold",
+            color=color,
+        )
 
-        for row_idx, (class_val, class_name) in enumerate(zip(class_values, class_names)):
+        for row_idx, (class_val, class_name) in enumerate(
+            zip(class_values, class_names)
+        ):
             samples = samples_by_class.get(class_val, [])
             count = len(samples)
 
@@ -438,18 +510,29 @@ def plot_samples_per_class(
                         va="bottom",
                         fontsize=9,
                         color="white",
-                        bbox=dict(boxstyle="round,pad=0.2", facecolor="black", alpha=0.7),
+                        bbox=dict(
+                            boxstyle="round,pad=0.2", facecolor="black", alpha=0.7
+                        ),
                     )
                 else:
                     # Empty placeholder
-                    placeholder = np.ones((display_size[0], display_size[1], 3), dtype=np.uint8) * 200
+                    placeholder = (
+                        np.ones((display_size[0], display_size[1], 3), dtype=np.uint8)
+                        * 200
+                    )
                     ax.imshow(placeholder)
 
                 ax.axis("off")
 
                 # Add row label (class name) on the first column
                 if col_idx == 0:
-                    ax.set_ylabel(f"{class_name}\n(n={count})", fontsize=10, rotation=0, labelpad=60, va="center")
+                    ax.set_ylabel(
+                        f"{class_name}\n(n={count})",
+                        fontsize=10,
+                        rotation=0,
+                        labelpad=60,
+                        va="center",
+                    )
                     ax.yaxis.set_label_position("left")
 
         plt.tight_layout()

@@ -410,6 +410,7 @@ class ClassifierMetrics:
             predictions: Dict with task tensors or object with attribute access.
             targets: Dict with task tensors or object with attribute access.
         """
+
         # Support both dict and object access
         def get_value(obj: Any, key: str) -> torch.Tensor | None:
             if isinstance(obj, dict):
@@ -429,9 +430,7 @@ class ClassifierMetrics:
             pred = get_value(predictions, label)
             target = get_value(targets, label)
             if pred is not None and target is not None:
-                self._binary_preds[label].append(
-                    torch.sigmoid(pred).cpu().numpy()
-                )
+                self._binary_preds[label].append(torch.sigmoid(pred).cpu().numpy())
                 self._binary_targets[label].append(target.cpu().numpy())
 
     @property

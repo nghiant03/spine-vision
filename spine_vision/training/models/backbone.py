@@ -85,19 +85,52 @@ BACKBONES: dict[str, str] = {
 }
 
 BackboneName = Literal[
-    "resnet18", "resnet34", "resnet50", "resnet101", "resnet152",
-    "resnet50_a2", "resnet50_b", "resnet50_c", "resnet50_d",
-    "resnext50", "resnext101",
-    "wide_resnet50", "wide_resnet101",
-    "resnetrs50", "resnetrs101", "resnetrs152",
-    "convnext_tiny", "convnext_small", "convnext_base", "convnext_large", "convnext_xlarge",
-    "convnextv2_tiny", "convnextv2_small", "convnextv2_base", "convnextv2_large", "convnextv2_huge",
-    "vit_tiny", "vit_small", "vit_base", "vit_large",
-    "deit_tiny", "deit_small", "deit_base",
-    "swin_tiny", "swin_small", "swin_base",
-    "efficientnet_b0", "efficientnet_b1", "efficientnet_b2", "efficientnet_b3", "efficientnet_b4",
-    "efficientnetv2_s", "efficientnetv2_m", "efficientnetv2_l",
-    "mobilenetv3_small", "mobilenetv3_large",
+    "resnet18",
+    "resnet34",
+    "resnet50",
+    "resnet101",
+    "resnet152",
+    "resnet50_a2",
+    "resnet50_b",
+    "resnet50_c",
+    "resnet50_d",
+    "resnext50",
+    "resnext101",
+    "wide_resnet50",
+    "wide_resnet101",
+    "resnetrs50",
+    "resnetrs101",
+    "resnetrs152",
+    "convnext_tiny",
+    "convnext_small",
+    "convnext_base",
+    "convnext_large",
+    "convnext_xlarge",
+    "convnextv2_tiny",
+    "convnextv2_small",
+    "convnextv2_base",
+    "convnextv2_large",
+    "convnextv2_huge",
+    "vit_tiny",
+    "vit_small",
+    "vit_base",
+    "vit_large",
+    "deit_tiny",
+    "deit_small",
+    "deit_base",
+    "swin_tiny",
+    "swin_small",
+    "swin_base",
+    "efficientnet_b0",
+    "efficientnet_b1",
+    "efficientnet_b2",
+    "efficientnet_b3",
+    "efficientnet_b4",
+    "efficientnetv2_s",
+    "efficientnetv2_m",
+    "efficientnetv2_l",
+    "mobilenetv3_small",
+    "mobilenetv3_large",
 ]
 
 
@@ -174,8 +207,7 @@ class BackboneFactory:
             return sorted(BACKBONES.keys())
 
         return sorted(
-            name for name in BACKBONES.keys()
-            if name.startswith(family.lower())
+            name for name in BACKBONES.keys() if name.startswith(family.lower())
         )
 
     @classmethod

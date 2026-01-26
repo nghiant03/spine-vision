@@ -22,8 +22,16 @@ class ClassificationDatasetConfig(BaseConfig):
     """Path to trained localization model checkpoint. If None, uses center crop."""
 
     model_variant: Literal[
-        "tiny", "small", "base", "large", "xlarge",
-        "v2_tiny", "v2_small", "v2_base", "v2_large", "v2_huge"
+        "tiny",
+        "small",
+        "base",
+        "large",
+        "xlarge",
+        "v2_tiny",
+        "v2_small",
+        "v2_base",
+        "v2_large",
+        "v2_huge",
     ] = "base"
     """ConvNext variant for localization model."""
 

@@ -382,10 +382,7 @@ class LocalizationTrainer(
 
     def on_epoch_begin(self, epoch: int) -> None:
         """Handle backbone unfreezing."""
-        if (
-            not self._backbone_unfrozen
-            and epoch >= self.config.freeze_backbone_epochs
-        ):
+        if not self._backbone_unfrozen and epoch >= self.config.freeze_backbone_epochs:
             logger.info(f"Unfreezing backbone at epoch {epoch + 1}")
             unwrapped_model = self.accelerator.unwrap_model(self.model)
             unwrapped_model.unfreeze_backbone()
@@ -406,7 +403,11 @@ class LocalizationTrainer(
             return metrics["med"]
         if val_loss is not None:
             return val_loss
-        return self.history["train_loss"][-1] if self.history["train_loss"] else float("inf")
+        return (
+            self.history["train_loss"][-1]
+            if self.history["train_loss"]
+            else float("inf")
+        )
 
     def _generate_final_visualizations(self) -> None:
         """Generate final training visualizations."""
@@ -463,9 +464,7 @@ class LocalizationTrainer(
                 filename="per_level_med",
             )
 
-        logger.info(
-            f"Visualizations saved to: {self.config.logs_path}"
-        )
+        logger.info(f"Visualizations saved to: {self.config.logs_path}")
 
     def evaluate(
         self, test_dataset: LocalizationDataset | None = None

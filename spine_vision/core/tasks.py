@@ -76,7 +76,9 @@ class TaskConfig:
 
     def __post_init__(self) -> None:
         if not self.display_name:
-            object.__setattr__(self, "display_name", self.name.replace("_", " ").title())
+            object.__setattr__(
+                self, "display_name", self.name.replace("_", " ").title()
+            )
         if not self.class_names and self.task_type == "multiclass":
             names = tuple(f"Class {i}" for i in range(self.num_classes))
             object.__setattr__(self, "class_names", names)
@@ -163,12 +165,14 @@ class BinaryStrategy(TaskStrategy):
         if task.custom_metrics_fn is not None:
             return task.custom_metrics_fn()
 
-        return MetricCollection({
-            "accuracy": Accuracy(task="binary"),
-            "precision": Precision(task="binary"),
-            "recall": Recall(task="binary"),
-            "f1": F1Score(task="binary"),
-        })
+        return MetricCollection(
+            {
+                "accuracy": Accuracy(task="binary"),
+                "precision": Precision(task="binary"),
+                "recall": Recall(task="binary"),
+                "f1": F1Score(task="binary"),
+            }
+        )
 
     def format_target(self, target: Tensor) -> Tensor:
         # Binary targets should be float for BCE
@@ -198,15 +202,17 @@ class MulticlassStrategy(TaskStrategy):
         if task.custom_metrics_fn is not None:
             return task.custom_metrics_fn()
 
-        return MetricCollection({
-            "accuracy": Accuracy(task="multiclass", num_classes=task.num_classes),
-            "balanced_accuracy": Accuracy(
-                task="multiclass", num_classes=task.num_classes, average="macro"
-            ),
-            "macro_f1": F1Score(
-                task="multiclass", num_classes=task.num_classes, average="macro"
-            ),
-        })
+        return MetricCollection(
+            {
+                "accuracy": Accuracy(task="multiclass", num_classes=task.num_classes),
+                "balanced_accuracy": Accuracy(
+                    task="multiclass", num_classes=task.num_classes, average="macro"
+                ),
+                "macro_f1": F1Score(
+                    task="multiclass", num_classes=task.num_classes, average="macro"
+                ),
+            }
+        )
 
     def format_target(self, target: Tensor) -> Tensor:
         # Multiclass targets should be long for CE
@@ -238,10 +244,12 @@ class MultilabelStrategy(TaskStrategy):
         if task.custom_metrics_fn is not None:
             return task.custom_metrics_fn()
 
-        return MetricCollection({
-            "accuracy": Accuracy(task="multilabel", num_labels=task.num_classes),
-            "f1": F1Score(task="multilabel", num_labels=task.num_classes),
-        })
+        return MetricCollection(
+            {
+                "accuracy": Accuracy(task="multilabel", num_labels=task.num_classes),
+                "f1": F1Score(task="multilabel", num_labels=task.num_classes),
+            }
+        )
 
     def format_target(self, target: Tensor) -> Tensor:
         if target.dtype != torch.float32:
@@ -276,13 +284,15 @@ class OrdinalStrategy(TaskStrategy):
         # Include MAE for ordinal (measures average grade error)
         from torchmetrics import MeanAbsoluteError
 
-        return MetricCollection({
-            "accuracy": Accuracy(task="multiclass", num_classes=task.num_classes),
-            "mae": MeanAbsoluteError(),
-            "macro_f1": F1Score(
-                task="multiclass", num_classes=task.num_classes, average="macro"
-            ),
-        })
+        return MetricCollection(
+            {
+                "accuracy": Accuracy(task="multiclass", num_classes=task.num_classes),
+                "mae": MeanAbsoluteError(),
+                "macro_f1": F1Score(
+                    task="multiclass", num_classes=task.num_classes, average="macro"
+                ),
+            }
+        )
 
     def format_target(self, target: Tensor) -> Tensor:
         if target.dtype != torch.int64:
@@ -312,10 +322,12 @@ class RegressionStrategy(TaskStrategy):
 
         from torchmetrics import MeanAbsoluteError, MeanSquaredError
 
-        return MetricCollection({
-            "mse": MeanSquaredError(),
-            "mae": MeanAbsoluteError(),
-        })
+        return MetricCollection(
+            {
+                "mse": MeanSquaredError(),
+                "mae": MeanAbsoluteError(),
+            }
+        )
 
     def format_target(self, target: Tensor) -> Tensor:
         if target.dtype != torch.float32:
@@ -431,9 +443,7 @@ def get_task(name: str) -> TaskConfig:
         KeyError: If task name is not found.
     """
     if name not in TASK_REGISTRY:
-        raise KeyError(
-            f"Unknown task: {name}. Available: {list(TASK_REGISTRY.keys())}"
-        )
+        raise KeyError(f"Unknown task: {name}. Available: {list(TASK_REGISTRY.keys())}")
     return TASK_REGISTRY[name]
 
 

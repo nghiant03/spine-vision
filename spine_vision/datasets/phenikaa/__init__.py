@@ -458,9 +458,7 @@ def preprocess_phenikaa(config: PreprocessConfig) -> ProcessingResult:
     report_files = collect_report_files(config.report_path)
 
     # Build processor registry
-    processor_registry = build_report_processor_registry(
-        config.pdf_id_crop_region
-    )
+    processor_registry = build_report_processor_registry(config.pdf_id_crop_region)
 
     # Build patient matcher
     patient_matcher = PatientMatcher(

@@ -78,9 +78,7 @@ def pdf_first_page_to_array(
     matrix = fitz.Matrix(zoom, zoom)
     page = doc[0]
     pix = page.get_pixmap(matrix=matrix)
-    array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
-        pix.height, pix.width, 3
-    )
+    array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
     doc.close()
 
     return array.copy()  # Copy to own memory after doc is closed

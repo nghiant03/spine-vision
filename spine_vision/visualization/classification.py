@@ -63,7 +63,9 @@ def plot_classification_predictions(
         all_correct = True
 
         for label in labels:
-            pred_val, gt_val = extract_prediction_value(predictions[label][i], targets[label][i])
+            pred_val, gt_val = extract_prediction_value(
+                predictions[label][i], targets[label][i]
+            )
             is_correct = pred_val == gt_val
             if not is_correct:
                 all_correct = False
@@ -71,7 +73,11 @@ def plot_classification_predictions(
             status = "\u2713" if is_correct else "\u2717"
             annotations.append(f"{display_name}: {pred_val} ({gt_val}) {status}")
 
-        border_color = CONFUSION_COLORS["correct"] if all_correct else CONFUSION_COLORS["incorrect"]
+        border_color = (
+            CONFUSION_COLORS["correct"]
+            if all_correct
+            else CONFUSION_COLORS["incorrect"]
+        )
 
         # Add colored border
         for spine in ax.spines.values():
@@ -95,7 +101,11 @@ def plot_classification_predictions(
     for i in range(n_samples, len(axes)):
         axes[i].axis("off")
 
-    fig.suptitle("Classification Predictions (Green=Correct, Red=Incorrect)", fontsize=12, fontweight="bold")
+    fig.suptitle(
+        "Classification Predictions (Green=Correct, Red=Incorrect)",
+        fontsize=12,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     save_figure(fig, output_path, filename, output_mode)
@@ -144,8 +154,14 @@ def plot_classification_metrics(
         if values:
             bars = ax.bar(label_names, values, color=colors)
             for bar, val in zip(bars, values):
-                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                        f"{val:.3f}", ha="center", va="bottom", fontsize=9)
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height(),
+                    f"{val:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=9,
+                )
             ax.set_ylim(0, 1)
             ax.set_ylabel("Value")
             ax.set_title(metric_type.title())
@@ -155,7 +171,8 @@ def plot_classification_metrics(
     overall_metrics = {k: v for k, v in metrics.items() if k.startswith("overall_")}
     if overall_metrics:
         title = "Per-Label Classification Metrics | " + " | ".join(
-            f"{k.replace('overall_', '').title()}: {v:.3f}" for k, v in overall_metrics.items()
+            f"{k.replace('overall_', '').title()}: {v:.3f}"
+            for k, v in overall_metrics.items()
         )
     else:
         title = "Per-Label Classification Metrics"
@@ -233,11 +250,17 @@ def plot_confusion_matrix_with_samples(
         cell_samples[key].append(i)
 
     display_names = class_names if class_names else [str(c) for c in unique_classes]
-    non_empty_cells = [(gt_idx, pred_idx) for (gt_idx, pred_idx), samples in cell_samples.items() if samples]
+    non_empty_cells = [
+        (gt_idx, pred_idx)
+        for (gt_idx, pred_idx), samples in cell_samples.items()
+        if samples
+    ]
 
     if not non_empty_cells:
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.text(0.5, 0.5, f"No samples found for '{target_label}'", ha="center", va="center")
+        ax.text(
+            0.5, 0.5, f"No samples found for '{target_label}'", ha="center", va="center"
+        )
         ax.axis("off")
         return fig
 
@@ -248,13 +271,22 @@ def plot_confusion_matrix_with_samples(
     # Create figure with gridspec for flexible layout
     # Use larger hspace to prevent overlap between "Predicted" label and sample row titles
     fig = plt.figure(figsize=(max(8, max_samples_per_cell * 2), 3.5 + n_cell_rows * 2))
-    gs = fig.add_gridspec(n_rows, 1, height_ratios=[2.5] + [1] * n_cell_rows, hspace=0.5)
+    gs = fig.add_gridspec(
+        n_rows, 1, height_ratios=[2.5] + [1] * n_cell_rows, hspace=0.5
+    )
 
     # Confusion matrix heatmap
     ax_cm = fig.add_subplot(gs[0])
     cm_normalized = cm.astype(float) / np.maximum(cm.sum(axis=1, keepdims=True), 1)
-    sns.heatmap(cm_normalized, annot=cm, fmt="d", cmap="Blues", ax=ax_cm,
-                xticklabels=display_names, yticklabels=display_names)
+    sns.heatmap(
+        cm_normalized,
+        annot=cm,
+        fmt="d",
+        cmap="Blues",
+        ax=ax_cm,
+        xticklabels=display_names,
+        yticklabels=display_names,
+    )
     ax_cm.set_xlabel("Predicted")
     ax_cm.set_ylabel("True")
     ax_cm.set_title(f"{display_name} Confusion Matrix")
@@ -269,9 +301,13 @@ def plot_confusion_matrix_with_samples(
         selected_indices = sample_indices[:max_samples_per_cell]
 
         is_correct = gt_idx == pred_idx
-        border_color = CONFUSION_COLORS["correct"] if is_correct else CONFUSION_COLORS["incorrect"]
+        border_color = (
+            CONFUSION_COLORS["correct"] if is_correct else CONFUSION_COLORS["incorrect"]
+        )
 
-        inner_gs = gs[cell_row_idx + 1].subgridspec(1, max_samples_per_cell, wspace=0.05)
+        inner_gs = gs[cell_row_idx + 1].subgridspec(
+            1, max_samples_per_cell, wspace=0.05
+        )
 
         gt_name = display_names[gt_idx]
         pred_name = display_names[pred_idx]
@@ -288,16 +324,18 @@ def plot_confusion_matrix_with_samples(
                 # Collect metadata for this displayed sample
                 if metadata and sample_idx < len(metadata):
                     sample_meta = metadata[sample_idx]
-                    displayed_samples.append({
-                        "row": cell_row_idx,
-                        "col": col_idx,
-                        "gt_class": gt_name,
-                        "pred_class": pred_name,
-                        "status": status,
-                        "source": sample_meta.get("source", ""),
-                        "patient_id": sample_meta.get("patient_id", ""),
-                        "level": sample_meta.get("level", ""),
-                    })
+                    displayed_samples.append(
+                        {
+                            "row": cell_row_idx,
+                            "col": col_idx,
+                            "gt_class": gt_name,
+                            "pred_class": pred_name,
+                            "status": status,
+                            "source": sample_meta.get("source", ""),
+                            "patient_id": sample_meta.get("patient_id", ""),
+                            "level": sample_meta.get("level", ""),
+                        }
+                    )
 
                 for spine in ax.spines.values():
                     spine.set_edgecolor(border_color)
@@ -313,11 +351,19 @@ def plot_confusion_matrix_with_samples(
         # Calculate y position for the row title (slightly above the sample row)
         row_bbox = gs[cell_row_idx + 1].get_position(fig)
         fig.text(
-            0.02, row_bbox.y1 + 0.01, row_title,
-            fontsize=9, ha="left", va="bottom",
+            0.02,
+            row_bbox.y1 + 0.01,
+            row_title,
+            fontsize=9,
+            ha="left",
+            va="bottom",
         )
 
-    fig.suptitle(f"Confusion Matrix with Samples - {display_name}", fontsize=12, fontweight="bold")
+    fig.suptitle(
+        f"Confusion Matrix with Samples - {display_name}",
+        fontsize=12,
+        fontweight="bold",
+    )
 
     output_filename = filename or f"confusion_matrix_samples_{target_label}"
     save_figure(fig, output_path, output_filename, output_mode)
@@ -325,9 +371,22 @@ def plot_confusion_matrix_with_samples(
     # Write metadata to separate CSV file
     if output_path and displayed_samples:
         import csv
+
         csv_path = output_path / f"{output_filename}_metadata.csv"
         with open(csv_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["row", "col", "gt_class", "pred_class", "status", "source", "patient_id", "level"])
+            writer = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "row",
+                    "col",
+                    "gt_class",
+                    "pred_class",
+                    "status",
+                    "source",
+                    "patient_id",
+                    "level",
+                ],
+            )
             writer.writeheader()
             writer.writerows(displayed_samples)
 
@@ -375,7 +434,9 @@ def plot_test_samples_with_labels(
         n_correct = 0
 
         for label in labels:
-            pred_val, gt_val = extract_prediction_value(predictions[label][i], targets[label][i])
+            pred_val, gt_val = extract_prediction_value(
+                predictions[label][i], targets[label][i]
+            )
             if pred_val == gt_val:
                 n_correct += 1
             display_name = get_task_display_name(label)[:3]
@@ -383,16 +444,30 @@ def plot_test_samples_with_labels(
             gt_lines.append(f"{display_name}:{gt_val}")
 
         accuracy = n_correct / len(labels) if labels else 0
-        acc_color = "green" if accuracy >= 0.8 else ("orange" if accuracy >= 0.5 else "red")
+        acc_color = (
+            "green" if accuracy >= 0.8 else ("orange" if accuracy >= 0.5 else "red")
+        )
 
         # Add text annotations
         pred_text = "Pred: " + " ".join(pred_lines[:4])
         gt_text = "GT: " + " ".join(gt_lines[:4])
 
-        ax.text(5, 15, pred_text, fontsize=8, color="white",
-                bbox=dict(boxstyle="round", facecolor="black", alpha=0.7))
-        ax.text(5, h - 10, gt_text, fontsize=8, color="white",
-                bbox=dict(boxstyle="round", facecolor="black", alpha=0.7))
+        ax.text(
+            5,
+            15,
+            pred_text,
+            fontsize=8,
+            color="white",
+            bbox=dict(boxstyle="round", facecolor="black", alpha=0.7),
+        )
+        ax.text(
+            5,
+            h - 10,
+            gt_text,
+            fontsize=8,
+            color="white",
+            bbox=dict(boxstyle="round", facecolor="black", alpha=0.7),
+        )
 
         # Build title
         title_parts = []
@@ -405,7 +480,9 @@ def plot_test_samples_with_labels(
                 title_parts.append(f"({patient[:8]})")
         title_parts.append(f"Acc: {accuracy:.0%}")
 
-        ax.set_title(" ".join(title_parts), fontsize=9, color=acc_color, fontweight="bold")
+        ax.set_title(
+            " ".join(title_parts), fontsize=9, color=acc_color, fontweight="bold"
+        )
 
         for spine in ax.spines.values():
             spine.set_edgecolor(acc_color)
@@ -415,7 +492,11 @@ def plot_test_samples_with_labels(
     for i in range(n_samples, len(axes)):
         axes[i].axis("off")
 
-    fig.suptitle(f"Test Samples with Labels ({n_samples} samples)", fontsize=12, fontweight="bold")
+    fig.suptitle(
+        f"Test Samples with Labels ({n_samples} samples)",
+        fontsize=12,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     save_figure(fig, output_path, filename, output_mode)
@@ -490,22 +571,40 @@ def plot_confusion_examples(
         for i, cls in enumerate(sorted(unique_classes)):
             correct_mask = (gt_classes == cls) & (pred_classes == cls)
             if correct_mask.sum() > 0:
-                categories.append((f"GT={cls} Correct", correct_mask, colors_correct[i % len(colors_correct)]))
+                categories.append(
+                    (
+                        f"GT={cls} Correct",
+                        correct_mask,
+                        colors_correct[i % len(colors_correct)],
+                    )
+                )
             incorrect_mask = (gt_classes == cls) & (pred_classes != cls)
             if incorrect_mask.sum() > 0:
-                categories.append((f"GT={cls} Wrong", incorrect_mask, colors_incorrect[i % len(colors_incorrect)]))
+                categories.append(
+                    (
+                        f"GT={cls} Wrong",
+                        incorrect_mask,
+                        colors_incorrect[i % len(colors_incorrect)],
+                    )
+                )
 
-    categories = [(name, mask, color) for name, mask, color in categories if mask.sum() > 0]
+    categories = [
+        (name, mask, color) for name, mask, color in categories if mask.sum() > 0
+    ]
     n_rows = len(categories)
 
     if n_rows == 0:
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.text(0.5, 0.5, f"No samples found for '{target_label}'", ha="center", va="center")
+        ax.text(
+            0.5, 0.5, f"No samples found for '{target_label}'", ha="center", va="center"
+        )
         ax.axis("off")
         return fig
 
     n_cols = num_samples_per_category
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows), squeeze=False)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows), squeeze=False
+    )
 
     for row_idx, (cat_name, mask, border_color) in enumerate(categories):
         indices = np.where(mask)[0]
@@ -528,9 +627,16 @@ def plot_confusion_examples(
                     if level:
                         meta_text = f"{level} | "
 
-                ax.text(0.5, 0.05, f"{meta_text}P:{pred_val} G:{gt_val}", transform=ax.transAxes,
-                        fontsize=8, color="white", ha="center",
-                        bbox=dict(boxstyle="round", facecolor="black", alpha=0.7))
+                ax.text(
+                    0.5,
+                    0.05,
+                    f"{meta_text}P:{pred_val} G:{gt_val}",
+                    transform=ax.transAxes,
+                    fontsize=8,
+                    color="white",
+                    ha="center",
+                    bbox=dict(boxstyle="round", facecolor="black", alpha=0.7),
+                )
 
                 for spine in ax.spines.values():
                     spine.set_edgecolor(border_color)
@@ -544,7 +650,9 @@ def plot_confusion_examples(
                 ax.set_title(f"{cat_name} ({count} total)", fontsize=9, loc="left")
 
     display_name = get_task_display_name(target_label)
-    fig.suptitle(f"Confusion Examples for {display_name}", fontsize=12, fontweight="bold")
+    fig.suptitle(
+        f"Confusion Examples for {display_name}", fontsize=12, fontweight="bold"
+    )
     plt.tight_layout()
 
     output_filename = filename or f"confusion_examples_{target_label}"
@@ -678,7 +786,9 @@ def plot_label_distribution(
     n_cols = min(3, n_labels)
     n_rows = (n_labels + n_cols - 1) // n_cols
 
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False)
+    fig, axes = plt.subplots(
+        n_rows, n_cols, figsize=(5 * n_cols, 4 * n_rows), squeeze=False
+    )
     axes = axes.flatten()
     sns.set_style("whitegrid")
 
@@ -706,8 +816,13 @@ def plot_label_distribution(
             counts = [label_dist.get(c, 0) for c in sorted_classes]
 
             offset = (s_idx - len(splits) / 2 + 0.5) * width
-            ax.bar(x + offset, counts, width, label=split.capitalize(),
-                   color=SPLIT_COLORS.get(split, "#95a5a6"))
+            ax.bar(
+                x + offset,
+                counts,
+                width,
+                label=split.capitalize(),
+                color=SPLIT_COLORS.get(split, "#95a5a6"),
+            )
 
         ax.set_xlabel("Class")
         ax.set_ylabel("Count")
@@ -723,10 +838,16 @@ def plot_label_distribution(
     # Build title with split totals
     split_totals = []
     for split in splits:
-        total = sum(sum(label_dist.values()) for label_dist in distributions[split].values()) // len(labels)
+        total = sum(
+            sum(label_dist.values()) for label_dist in distributions[split].values()
+        ) // len(labels)
         split_totals.append(f"{split.capitalize()}: {total}")
 
-    fig.suptitle(f"Label Distribution by Split ({' | '.join(split_totals)})", fontsize=12, fontweight="bold")
+    fig.suptitle(
+        f"Label Distribution by Split ({' | '.join(split_totals)})",
+        fontsize=12,
+        fontweight="bold",
+    )
     plt.tight_layout()
 
     save_figure(fig, output_path, filename, output_mode)

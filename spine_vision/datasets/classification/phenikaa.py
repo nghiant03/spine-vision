@@ -162,12 +162,16 @@ def process_phenikaa(
                 for ivd_level, label_row in levels.items():
                     if ivd_level < 1 or ivd_level > 5:
                         continue
-                    output_filename = f"phenikaa_{patient_id}_{series_type}_L{ivd_level}.png"
+                    output_filename = (
+                        f"phenikaa_{patient_id}_{series_type}_L{ivd_level}.png"
+                    )
                     if f"images/{output_filename}" not in existing_image_paths:
                         levels_to_process[ivd_level] = label_row
 
                 if not levels_to_process:
-                    logger.debug(f"Skipping {patient_id}/{series_type}: all levels exist")
+                    logger.debug(
+                        f"Skipping {patient_id}/{series_type}: all levels exist"
+                    )
                     continue
 
                 try:
@@ -205,7 +209,9 @@ def process_phenikaa(
                     if crop is None:
                         continue
 
-                    output_filename = f"phenikaa_{patient_id}_{series_type}_L{ivd_level}.png"
+                    output_filename = (
+                        f"phenikaa_{patient_id}_{series_type}_L{ivd_level}.png"
+                    )
                     output_path = output_images_path / output_filename
                     Image.fromarray(crop).save(output_path)
 

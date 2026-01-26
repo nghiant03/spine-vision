@@ -102,6 +102,7 @@ class TrainingVisualizer(BaseVisualizer):
         if use_trackio:
             try:
                 import trackio
+
                 self._trackio = trackio
             except ImportError:
                 logger.warning("trackio not installed. Disabling trackio logging.")
@@ -118,6 +119,7 @@ class TrainingVisualizer(BaseVisualizer):
         if self._trackio is None:
             return
         import io
+
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
         buf.seek(0)
@@ -198,12 +200,20 @@ class TrainingVisualizer(BaseVisualizer):
 
             boxes = [
                 {
-                    "position": {"middle": [float(gt_x), float(gt_y)], "width": 10, "height": 10},
+                    "position": {
+                        "middle": [float(gt_x), float(gt_y)],
+                        "width": 10,
+                        "height": 10,
+                    },
                     "class_id": 0,
                     "box_caption": "GT",
                 },
                 {
-                    "position": {"middle": [float(pred_x), float(pred_y)], "width": 10, "height": 10},
+                    "position": {
+                        "middle": [float(pred_x), float(pred_y)],
+                        "width": 10,
+                        "height": 10,
+                    },
                     "class_id": 1,
                     "box_caption": "Pred",
                 },
@@ -212,7 +222,12 @@ class TrainingVisualizer(BaseVisualizer):
             trackio_img = self._trackio.Image(
                 img,
                 caption=caption,
-                boxes={"predictions": {"box_data": boxes, "class_labels": {0: "GT", 1: "Pred"}}},
+                boxes={
+                    "predictions": {
+                        "box_data": boxes,
+                        "class_labels": {0: "GT", 1: "Pred"},
+                    }
+                },
             )
             trackio_images.append(trackio_img)
 
@@ -239,12 +254,14 @@ class TrainingVisualizer(BaseVisualizer):
         )
         if self._should_log_to_trackio(log_to_trackio) and self._trackio is not None:
             distances = np.sqrt(np.sum((predictions - targets) ** 2, axis=1))
-            self._trackio.log({
-                "error/mean_distance": float(np.mean(distances)),
-                "error/std_distance": float(np.std(distances)),
-                "error/median_distance": float(np.median(distances)),
-                "error/max_distance": float(np.max(distances)),
-            })
+            self._trackio.log(
+                {
+                    "error/mean_distance": float(np.mean(distances)),
+                    "error/std_distance": float(np.std(distances)),
+                    "error/median_distance": float(np.median(distances)),
+                    "error/max_distance": float(np.max(distances)),
+                }
+            )
         return fig
 
     def plot_per_level_metrics(
@@ -272,7 +289,9 @@ class TrainingVisualizer(BaseVisualizer):
                 if key in metrics:
                     values.append(metrics[key])
                     labels.append(level)
-            trackio_metrics = {f"per_level/{label}": val for label, val in zip(labels, values)}
+            trackio_metrics = {
+                f"per_level/{label}": val for label, val in zip(labels, values)
+            }
             if values:
                 trackio_metrics["per_level/average"] = float(np.mean(values))
             self._trackio.log(trackio_metrics)
@@ -369,7 +388,9 @@ class TrainingVisualizer(BaseVisualizer):
                     caption_parts.append(f"Level: {level}")
 
             for label in labels:
-                pred_val, gt_val = extract_prediction_value(predictions[label][i], targets[label][i])
+                pred_val, gt_val = extract_prediction_value(
+                    predictions[label][i], targets[label][i]
+                )
                 display_name = get_task_display_name(label)
                 status = "\u2713" if pred_val == gt_val else "\u2717"
                 caption_parts.append(f"{display_name}: {pred_val}/{gt_val} {status}")
@@ -600,12 +621,14 @@ class TrainingVisualizer(BaseVisualizer):
                 for label, class_counts in split_dist.items():
                     total = sum(class_counts.values())
                     for cls, count in class_counts.items():
-                        self._trackio.log({
-                            f"distribution/{split}/{label}/class_{cls}": count,
-                            f"distribution/{split}/{label}/class_{cls}_pct": (
-                                count / total * 100 if total > 0 else 0
-                            ),
-                        })
+                        self._trackio.log(
+                            {
+                                f"distribution/{split}/{label}/class_{cls}": count,
+                                f"distribution/{split}/{label}/class_{cls}_pct": (
+                                    count / total * 100 if total > 0 else 0
+                                ),
+                            }
+                        )
         return fig
 
 

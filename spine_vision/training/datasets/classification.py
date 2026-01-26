@@ -146,16 +146,18 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
         if levels:
             level_set = set(levels)
             self.records = [
-                r
-                for r in self.records
-                if IDX_TO_LEVEL.get(r["level_idx"]) in level_set
+                r for r in self.records if IDX_TO_LEVEL.get(r["level_idx"]) in level_set
             ]
 
         # Split by patient to avoid data leakage
         unique_patients = self._get_unique_patients()
         train_patients, val_patients, test_patients = split_patients(
-            unique_patients, self.records, self.target_labels,
-            val_ratio, test_ratio, seed
+            unique_patients,
+            self.records,
+            self.target_labels,
+            val_ratio,
+            test_ratio,
+            seed,
         )
 
         if split == "train":
@@ -163,9 +165,7 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
                 r for r in self.records if r["patient_key"] in train_patients
             ]
         elif split == "val":
-            self.records = [
-                r for r in self.records if r["patient_key"] in val_patients
-            ]
+            self.records = [r for r in self.records if r["patient_key"] in val_patients]
         elif split == "test":
             self.records = [
                 r for r in self.records if r["patient_key"] in test_patients
@@ -251,17 +251,19 @@ class ClassificationDataset(Dataset[dict[str, Any]]):
         ]
 
         if self.augment:
-            transform_list.extend([
-                transforms.RandomAffine(
-                    degrees=10,
-                    translate=(0.05, 0.05),
-                    scale=(0.95, 1.05),
-                ),
-                transforms.ColorJitter(
-                    brightness=0.2,
-                    contrast=0.2,
-                ),
-            ])
+            transform_list.extend(
+                [
+                    transforms.RandomAffine(
+                        degrees=10,
+                        translate=(0.05, 0.05),
+                        scale=(0.95, 1.05),
+                    ),
+                    transforms.ColorJitter(
+                        brightness=0.2,
+                        contrast=0.2,
+                    ),
+                ]
+            )
 
         transform_list.append(transforms.ToTensor())
 

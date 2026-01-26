@@ -1,6 +1,5 @@
 """Training CLI command configuration and entry point."""
 
-
 import tyro
 from loguru import logger
 
@@ -100,7 +99,9 @@ def _train_classification(config: ClassificationConfig) -> None:
     # Run evaluation on test set
     logger.info("Running test evaluation...")
     test_metrics = trainer.evaluate()
-    logger.info(f"Test overall accuracy: {test_metrics.get('overall_accuracy', 0):.2f}%")
+    logger.info(
+        f"Test overall accuracy: {test_metrics.get('overall_accuracy', 0):.2f}%"
+    )
 
 
 if __name__ == "__main__":

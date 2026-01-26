@@ -246,13 +246,9 @@ class ResidualHead(BaseHead):
 
         # Input projection if needed
         self.input_proj = (
-            nn.Linear(in_features, hidden_dims[0])
-            if hidden_dims
-            else nn.Identity()
+            nn.Linear(in_features, hidden_dims[0]) if hidden_dims else nn.Identity()
         )
-        self.input_norm = (
-            nn.LayerNorm(in_features) if use_layer_norm else nn.Identity()
-        )
+        self.input_norm = nn.LayerNorm(in_features) if use_layer_norm else nn.Identity()
 
         # Residual blocks
         self.blocks = nn.ModuleList()
@@ -270,9 +266,7 @@ class ResidualHead(BaseHead):
             self.blocks.append(block)
 
         # Output layer
-        self.output_norm = (
-            nn.LayerNorm(prev_dim) if use_layer_norm else nn.Identity()
-        )
+        self.output_norm = nn.LayerNorm(prev_dim) if use_layer_norm else nn.Identity()
         self.output_dropout = nn.Dropout(dropout)
         self.output_fc = nn.Linear(prev_dim, out_features)
         self.output_act = get_activation(output_activation)

@@ -28,13 +28,15 @@ def setup_logger(
         level=log_level,
     )
 
-def add_file_log(log_path: Path | str | None = None, log_filename: str = "spine_vision.log"):
+
+def add_file_log(
+    log_path: Path | str | None = None, log_filename: str = "spine_vision.log"
+):
     if log_path is None:
         log_path = Path.cwd() / "logs"
 
     if isinstance(log_path, str):
         log_path = Path(log_path)
-
 
     log_path.mkdir(parents=True, exist_ok=True)
     logger.add(

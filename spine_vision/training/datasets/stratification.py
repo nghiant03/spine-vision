@@ -5,7 +5,6 @@ label distribution across splits, with support for both single-label
 and multilabel stratification.
 """
 
-
 import numpy as np
 from iterstrat.ml_stratifiers import MultilabelStratifiedShuffleSplit
 from sklearn.model_selection import StratifiedShuffleSplit
@@ -242,9 +241,7 @@ def split_patients_multilabel(
             test_size=test_ratio,  # pyright: ignore[reportArgumentType]
             random_state=seed,
         )
-        train_val_idx, test_idx = next(
-            splitter_test.split(patients_arr, label_matrix)
-        )
+        train_val_idx, test_idx = next(splitter_test.split(patients_arr, label_matrix))
         test_patients = set(patients_arr[test_idx])
         remaining_patients = patients_arr[train_val_idx]
         remaining_labels = label_matrix[train_val_idx]

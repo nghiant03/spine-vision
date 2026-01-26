@@ -56,9 +56,24 @@ def plot_localization_predictions(
         gt_x, gt_y = targets[i] * [w, h]
 
         # Ground truth (green X)
-        ax.scatter([gt_x], [gt_y], c="green", marker="x", s=100, linewidths=2, label="GT" if i == 0 else None)
+        ax.scatter(
+            [gt_x],
+            [gt_y],
+            c="green",
+            marker="x",
+            s=100,
+            linewidths=2,
+            label="GT" if i == 0 else None,
+        )
         # Prediction (red circle)
-        ax.scatter([pred_x], [pred_y], c="red", marker="o", s=80, label="Pred" if i == 0 else None)
+        ax.scatter(
+            [pred_x],
+            [pred_y],
+            c="red",
+            marker="o",
+            s=80,
+            label="Pred" if i == 0 else None,
+        )
         # Connecting line
         ax.plot([gt_x, pred_x], [gt_y, pred_y], "y--", linewidth=1, alpha=0.7)
 
@@ -72,7 +87,9 @@ def plot_localization_predictions(
     for i in range(n_samples, len(axes)):
         axes[i].axis("off")
 
-    fig.suptitle("Localization Predictions (Green=GT, Red=Pred)", fontsize=12, fontweight="bold")
+    fig.suptitle(
+        "Localization Predictions (Green=GT, Red=Pred)", fontsize=12, fontweight="bold"
+    )
     fig.legend(loc="upper right")
     plt.tight_layout()
 
@@ -118,7 +135,9 @@ def plot_error_distribution(
 
     # X vs Y error scatter
     ax = axes[0, 1]
-    scatter = ax.scatter(errors[:, 0], errors[:, 1], c=distances, cmap="viridis", s=10, alpha=0.5)
+    scatter = ax.scatter(
+        errors[:, 0], errors[:, 1], c=distances, cmap="viridis", s=10, alpha=0.5
+    )
     plt.colorbar(scatter, ax=ax, label="Distance")
     ax.set_xlabel("X Error")
     ax.set_ylabel("Y Error")
@@ -197,8 +216,14 @@ def plot_per_level_metrics(
 
     bars = ax.bar(labels, values, color="steelblue")
     for bar, val in zip(bars, values):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(), f"{val:.4f}",
-                ha="center", va="bottom", fontsize=9)
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height(),
+            f"{val:.4f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
 
     if values:
         avg = float(np.mean(values))
@@ -252,13 +277,27 @@ def visualize_sample(
 
     # Ground truth
     ax.scatter([gt_x], [gt_y], c="green", marker="x", s=150, linewidths=3, label="GT")
-    ax.annotate("GT", (gt_x, gt_y), textcoords="offset points", xytext=(0, -15),
-                ha="center", fontsize=10, color="green")
+    ax.annotate(
+        "GT",
+        (gt_x, gt_y),
+        textcoords="offset points",
+        xytext=(0, -15),
+        ha="center",
+        fontsize=10,
+        color="green",
+    )
 
     # Prediction
     ax.scatter([pred_x], [pred_y], c="red", marker="o", s=120, label="Pred")
-    ax.annotate("Pred", (pred_x, pred_y), textcoords="offset points", xytext=(0, 15),
-                ha="center", fontsize=10, color="red")
+    ax.annotate(
+        "Pred",
+        (pred_x, pred_y),
+        textcoords="offset points",
+        xytext=(0, 15),
+        ha="center",
+        fontsize=10,
+        color="red",
+    )
 
     # Connecting line
     ax.plot([gt_x, pred_x], [gt_y, pred_y], "y--", linewidth=2)

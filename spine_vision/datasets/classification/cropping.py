@@ -460,11 +460,13 @@ def predict_ivd_locations(
     """
     from torchvision import transforms
 
-    transform = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
+    transform = transforms.Compose(
+        [
+            transforms.Resize(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
 
     pil_img = Image.fromarray(normalize_to_uint8(image)).convert("RGB")
     tensor = transform(pil_img).unsqueeze(0).to(device)

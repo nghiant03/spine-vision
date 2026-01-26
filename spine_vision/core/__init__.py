@@ -1,6 +1,5 @@
 """Core utilities for logging, configuration, and task definitions."""
 
-
 from spine_vision.core.config import BaseConfig
 from spine_vision.core.logging import add_file_log, setup_logger
 from spine_vision.core.tasks import (

@@ -119,7 +119,9 @@ def load_existing_annotations(csv_path: Path) -> list[ClassificationRecord]:
     return records
 
 
-def create_classification_dataset(config: ClassificationDatasetConfig) -> ProcessingResult:
+def create_classification_dataset(
+    config: ClassificationDatasetConfig,
+) -> ProcessingResult:
     """Create classification dataset from Phenikaa and SPIDER.
 
     Uses filesystem-based detection for continuous integration:
