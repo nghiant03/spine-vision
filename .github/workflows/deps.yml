@@ -46,7 +46,10 @@ jobs:
             -o docs/dependencies/internal-deps.svg \
             --only spine_vision \
             --exclude-exact spine_vision.__init__ \
-            --max-bacon 3
+            --max-bacon 3 \
+            --cluster \
+            --rankdir LR \
+            --rmprefix spine_vision
         continue-on-error: true
 
       - name: Commit and push if changed
