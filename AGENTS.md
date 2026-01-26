@@ -88,6 +88,8 @@ spine-vision/
 │   │   ├── levels.py          # IVD level constants (LEVEL_TO_IDX, etc.)
 │   │   ├── localization.py    # LocalizationDatasetConfig, LocalizationDatasetProcessor
 │   │   ├── classification.py  # ClassificationDatasetConfig, ClassificationDatasetProcessor
+│   │   ├── image_processing.py # Image resampling, cropping, IVD localization utilities
+│   │   ├── source_processors.py # Phenikaa/SPIDER dataset processing functions
 │   │   ├── rsna.py            # RSNA series mapping utilities
 │   │   └── phenikaa/          # Phenikaa dataset preprocessing
 │   │       ├── __init__.py    # PreprocessConfig, PhenikkaaProcessor
@@ -95,7 +97,10 @@ spine-vision/
 │   │       └── matching.py    # PatientMatcher, fuzzy_value_extract
 │   ├── training/              # Training infrastructure
 │   │   ├── __init__.py        # All training exports
-│   │   ├── base.py            # BaseTrainer, BaseModel, TrainingConfig, TrainingResult
+│   │   ├── base.py            # Re-exports from config, model_base, trainer
+│   │   ├── config.py          # TrainingConfig, TrainingResult, EpochResult
+│   │   ├── model_base.py      # BaseModel abstract class
+│   │   ├── trainer.py         # BaseTrainer class with Accelerate integration
 │   │   ├── heads.py           # HeadConfig, HeadFactory, MLPHead, etc.
 │   │   ├── losses.py          # FocalLoss
 │   │   ├── metrics.py         # LocalizationMetrics, ClassifierMetrics
@@ -111,7 +116,9 @@ spine-vision/
 │   │   └── datasets/          # PyTorch datasets for training
 │   │       ├── __init__.py
 │   │       ├── localization.py  # LocalizationDataset, LocalizationCollator
-│   │       └── classification.py # ClassificationDataset, ClassificationCollator, DynamicTargets
+│   │       ├── classification.py # ClassificationDataset, ClassificationCollator, DynamicTargets
+│   │       ├── stratification.py # Patient splitting (single-label, multi-label)
+│   │       └── sampling.py      # Weighted sampling utilities
 │   ├── visualization/         # Visualization utilities
 │   │   ├── __init__.py        # All visualization exports
 │   │   ├── base.py            # save_figure, load_original_images

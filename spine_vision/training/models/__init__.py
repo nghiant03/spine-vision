@@ -54,18 +54,12 @@ print(list_backbones("resnet"))  # ResNet family only
 ```
 """
 
-from spine_vision.core.tasks import (
-    AVAILABLE_TASK_NAMES,
-    TASK_REGISTRY,
-    TaskConfig,
-    get_task,
-    get_tasks,
-)
 from spine_vision.training.models.backbone import (
     BACKBONES,
     BackboneFactory,
     BackboneName,
 )
+from spine_vision.training.models.base import BaseModel
 from spine_vision.training.models.generic import (
     Classifier,
     CoordinateRegressor,
@@ -74,14 +68,9 @@ from spine_vision.training.models.generic import (
 
 __all__ = [
     # Models
+    "BaseModel",
     "Classifier",
     "CoordinateRegressor",
-    # Task configuration (re-exported from core.tasks for convenience)
-    "TaskConfig",
-    "TASK_REGISTRY",
-    "AVAILABLE_TASK_NAMES",
-    "get_task",
-    "get_tasks",
     # Backbone utilities
     "BackboneFactory",
     "BACKBONES",

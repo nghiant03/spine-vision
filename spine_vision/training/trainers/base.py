@@ -1,10 +1,8 @@
-"""Base classes for training infrastructure.
+"""Base trainer class for model training.
 
-Provides abstract interfaces for models and trainers that can be extended
-for various tasks (localization, classification, segmentation).
-
-Uses HuggingFace Accelerate for distributed training and mixed precision,
-with optional Trackio logging.
+Provides abstract trainer with common training loop, validation, checkpointing,
+and logging. Uses HuggingFace Accelerate for distributed training and mixed
+precision, with optional Trackio logging.
 """
 
 from __future__ import annotations
@@ -14,50 +12,19 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Generic, Literal, Sequence, TypeVar
+from typing import Any, Callable, Generic, Literal, TypeVar
 
 import numpy as np
 import torch
 import torch.nn as nn
 from accelerate import Accelerator
 from loguru import logger
-from PIL import Image
 from pydantic import model_validator
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
 
 from spine_vision.core import BaseConfig
-
-
-def _create_worker_init_fn(seed: int) -> Callable[[int], None]:
-    """Create a worker init function that seeds each worker deterministically.
-
-    Each DataLoader worker gets a unique seed based on base seed + worker_id.
-    This ensures reproducible data loading and augmentation across runs.
-
-    Args:
-        seed: Base random seed.
-
-    Returns:
-        Worker init function for DataLoader.
-    """
-    import random
-
-    def worker_init_fn(worker_id: int) -> None:
-        worker_seed = seed + worker_id
-        random.seed(worker_seed)
-        np.random.seed(worker_seed)
-        torch.manual_seed(worker_seed)
-
-    return worker_init_fn
-
-
-# Type variables for generic trainer
-TConfig = TypeVar("TConfig", bound="TrainingConfig")
-TModel = TypeVar("TModel", bound=nn.Module)
-TDataset = TypeVar("TDataset", bound=Dataset[Any])
 
 
 def generate_run_id() -> str:
@@ -139,7 +106,6 @@ class TrainingConfig(BaseConfig):
     use_space: bool = True
     trackio_project: str = "spine-vision"
     trackio_run_name: str | None = None
-    
 
     # Reproducibility
     seed: int = 42
@@ -220,166 +186,9 @@ class EpochResult:
     lr: float = 0.0
 
 
-class BaseModel(nn.Module, ABC):
-    """Abstract base class for trainable models.
-
-    All models should inherit from this class and implement:
-    - forward(): The forward pass
-    - get_loss(): Compute training loss
-    - predict(): Run inference (no gradients)
-    - test_inference(): Test model with sample images
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._is_initialized = False
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Human-readable name for this model."""
-        ...
-
-    @abstractmethod
-    def forward(self, x: torch.Tensor, **kwargs: Any) -> Any:
-        """Forward pass.
-
-        Args:
-            x: Input tensor.
-            **kwargs: Additional model-specific arguments.
-
-        Returns:
-            Model output (tensor or dict of tensors for multi-task models).
-        """
-        ...
-
-    @abstractmethod
-    def get_loss(
-        self,
-        predictions: torch.Tensor,
-        targets: torch.Tensor,
-        **kwargs: Any,
-    ) -> torch.Tensor:
-        """Compute training loss.
-
-        Args:
-            predictions: Model predictions.
-            targets: Ground truth targets.
-            **kwargs: Additional arguments (e.g., weights, masks).
-
-        Returns:
-            Loss tensor (scalar).
-        """
-        ...
-
-    def predict(self, x: torch.Tensor, **kwargs: Any) -> Any:
-        """Run inference without gradients.
-
-        Args:
-            x: Input tensor.
-            **kwargs: Additional model-specific arguments.
-
-        Returns:
-            Model predictions.
-        """
-        self.eval()
-        with torch.no_grad():
-            return self.forward(x, **kwargs)
-
-    def test_inference(
-        self,
-        images: Sequence[str | Path | Image.Image | np.ndarray],
-        image_size: tuple[int, int] = (224, 224),
-        device: str | torch.device | None = None,
-    ) -> dict[str, Any]:
-        """Test inference with a list of images.
-
-        This method provides a convenient way to test the model with
-        various image inputs (file paths, PIL Images, or numpy arrays).
-
-        Args:
-            images: List of images - can be file paths, PIL Images, or numpy arrays.
-            image_size: Target size for resizing images (H, W).
-            device: Device to run inference on. If None, uses model's current device.
-
-        Returns:
-            Dictionary containing:
-                - predictions: Model predictions as numpy array
-                - images: Preprocessed images as numpy array (for visualization)
-                - inference_time_ms: Total inference time in milliseconds
-        """
-        import time
-
-        # Determine device
-        if device is None:
-            device = next(self.parameters()).device
-        else:
-            device = torch.device(device)
-
-        # Build preprocessing transform
-        transform = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ])
-
-        # Process images
-        processed_tensors: list[torch.Tensor] = []
-        processed_images: list[np.ndarray] = []
-
-        for img in images:
-            # Convert to PIL Image
-            if isinstance(img, (str, Path)):
-                pil_img = Image.open(img).convert("RGB")
-            elif isinstance(img, np.ndarray):
-                pil_img = Image.fromarray(img).convert("RGB")
-            elif isinstance(img, Image.Image):
-                pil_img = img.convert("RGB")
-            else:
-                raise TypeError(f"Unsupported image type: {type(img)}")
-
-            # Store original (resized) for visualization
-            resized = pil_img.resize((image_size[1], image_size[0]))
-            processed_images.append(np.array(resized))
-
-            # Transform and add to batch
-            tensor = transform(pil_img)
-            processed_tensors.append(tensor)
-
-        # Create batch
-        batch = torch.stack(processed_tensors).to(device)
-
-        # Run inference
-        self.eval()
-        start_time = time.perf_counter()
-        with torch.no_grad():
-            predictions = self.forward(batch)
-        end_time = time.perf_counter()
-
-        inference_time_ms = (end_time - start_time) * 1000
-
-        return {
-            "predictions": predictions.cpu().numpy(),
-            "images": np.stack(processed_images),
-            "inference_time_ms": inference_time_ms,
-            "num_images": len(images),
-            "device": str(device),
-        }
-
-    def count_parameters(self) -> int:
-        """Count trainable parameters."""
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
-
-    def freeze_backbone(self) -> None:
-        """Freeze backbone parameters (if applicable)."""
-        pass
-
-    def unfreeze_backbone(self) -> None:
-        """Unfreeze backbone parameters (if applicable)."""
-        pass
+TConfig = TypeVar("TConfig", bound=TrainingConfig)
+TModel = TypeVar("TModel", bound=nn.Module)
+TDataset = TypeVar("TDataset", bound=Dataset[Any])
 
 
 class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
@@ -392,9 +201,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
     Subclass this for task-specific training logic.
 
     Training Hooks (override these for custom behavior):
-        - on_epoch_end(epoch, metrics): Called at end of each epoch for custom logging/visualization
-        - on_train_end(result): Called after training completes for final processing
-        - get_metric_for_checkpoint(val_loss, metrics): Return metric value for saving best model
+        - on_epoch_end(epoch, metrics): Called at end of each epoch
+        - on_train_end(result): Called after training completes
+        - get_metric_for_checkpoint(val_loss, metrics): Return metric for saving best model
     """
 
     def __init__(
@@ -515,10 +324,7 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             project_name=self.config.trackio_project,
             config=trackio_config,
             init_kwargs={
-                "trackio": {
-                    "name": self.config.trackio_run_name,
-                    "space_id": space_id
-                }
+                "trackio": {"name": self.config.trackio_run_name, "space_id": space_id}
             },
         )
         self._trackio_initialized = True
@@ -545,8 +351,6 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
     def _set_seed(self, seed: int) -> None:
         """Set random seeds for reproducibility."""
         import random
-
-        import numpy as np
 
         random.seed(seed)
         np.random.seed(seed)
@@ -723,9 +527,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             best_epoch=self.best_epoch,
             best_metric=self.best_metric,
             final_train_loss=self.history["train_loss"][-1],
-            final_val_loss=self.history["val_loss"][-1]
-            if self.history["val_loss"]
-            else 0.0,
+            final_val_loss=(
+                self.history["val_loss"][-1] if self.history["val_loss"] else 0.0
+            ),
             history=self.history,
             checkpoint_path=best_checkpoint,
         )
@@ -892,9 +696,9 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
             "epoch": self.current_epoch,
             "model_state_dict": unwrapped_model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            "scheduler_state_dict": self.scheduler.state_dict()
-            if self.scheduler
-            else None,
+            "scheduler_state_dict": (
+                self.scheduler.state_dict() if self.scheduler else None
+            ),
             "best_metric": self.best_metric,
             "best_epoch": self.best_epoch,
             "history": self.history,
@@ -994,4 +798,31 @@ class BaseTrainer(ABC, Generic[TConfig, TModel, TDataset]):
         # Default: use validation loss, fall back to train loss
         if val_loss is not None:
             return val_loss
-        return self.history["train_loss"][-1] if self.history["train_loss"] else float("inf")
+        return (
+            self.history["train_loss"][-1]
+            if self.history["train_loss"]
+            else float("inf")
+        )
+
+
+def _create_worker_init_fn(seed: int) -> Callable[[int], None]:
+    """Create a worker init function that seeds each worker deterministically.
+
+    Each DataLoader worker gets a unique seed based on base seed + worker_id.
+    This ensures reproducible data loading and augmentation across runs.
+
+    Args:
+        seed: Base random seed.
+
+    Returns:
+        Worker init function for DataLoader.
+    """
+    import random
+
+    def worker_init_fn(worker_id: int) -> None:
+        worker_seed = seed + worker_id
+        random.seed(worker_seed)
+        np.random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+
+    return worker_init_fn

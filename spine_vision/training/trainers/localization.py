@@ -13,7 +13,6 @@ import torch
 from loguru import logger
 from torch.utils.data import DataLoader
 
-from spine_vision.training.base import BaseTrainer, TrainingConfig, TrainingResult
 from spine_vision.training.datasets.localization import (
     IDX_TO_LEVEL,
     NUM_LEVELS,
@@ -23,6 +22,11 @@ from spine_vision.training.datasets.localization import (
 from spine_vision.training.metrics import LocalizationMetrics
 from spine_vision.training.models import CoordinateRegressor
 from spine_vision.training.registry import register_trainer
+from spine_vision.training.trainers.base import (
+    BaseTrainer,
+    TrainingConfig,
+    TrainingResult,
+)
 from spine_vision.visualization import TrainingVisualizer
 
 

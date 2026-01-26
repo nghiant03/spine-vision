@@ -20,14 +20,51 @@ Usage:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import Any, Callable, TypeVar
 
-if TYPE_CHECKING:
-    from spine_vision.training.base import BaseModel, BaseTrainer, TrainingConfig
+from spine_vision.training.models import BaseModel
+from spine_vision.training.trainers import BaseTrainer, TrainingConfig
 
 T = TypeVar("T")
-ModelT = TypeVar("ModelT", bound="BaseModel")
-TrainerT = TypeVar("TrainerT", bound="BaseTrainer[Any, Any, Any]")
+TBaseModel = TypeVar("TBaseModel", bound=BaseModel)
+TTrainer = TypeVar("TTrainer", bound=BaseTrainer[Any, Any, Any])
+
+
+def register_model(name: str) -> Callable[[type[TBaseModel]], type[TBaseModel]]:
+    """Decorator for registering models.
+
+    Example:
+        @register_model("convnext_loc")
+        class ConvNextLocalization(BaseModel):
+            ...
+    """
+    return ModelRegistry.register(name)
+
+
+def register_trainer(
+    name: str,
+    *,
+    config_cls: type[TrainingConfig] | None = None,
+) -> Callable[[type[TTrainer]], type[TTrainer]]:
+    """Decorator for registering trainers.
+
+    Example:
+        @register_trainer("localization", config_cls=LocalizationConfig)
+        class LocalizationTrainer(BaseTrainer):
+            ...
+    """
+    return TrainerRegistry.register(name, config_cls=config_cls)
+
+
+def register_metrics(name: str) -> Callable[[type[T]], type[T]]:
+    """Decorator for registering metrics.
+
+    Example:
+        @register_metrics("localization")
+        class LocalizationMetrics(BaseMetrics):
+            ...
+    """
+    return MetricsRegistry.register(name)
 
 
 class ModelRegistry:
@@ -36,7 +73,7 @@ class ModelRegistry:
     _models: dict[str, type[BaseModel]] = {}
 
     @classmethod
-    def register(cls, name: str) -> Callable[[type[ModelT]], type[ModelT]]:
+    def register(cls, name: str) -> Callable[[type[TBaseModel]], type[TBaseModel]]:
         """Register a model class.
 
         Args:
@@ -46,7 +83,7 @@ class ModelRegistry:
             Decorator function.
         """
 
-        def decorator(model_cls: type[ModelT]) -> type[ModelT]:
+        def decorator(model_cls: type[TBaseModel]) -> type[TBaseModel]:
             cls._models[name] = model_cls  # type: ignore[assignment]
             return model_cls
 
@@ -98,7 +135,7 @@ class TrainerRegistry:
         name: str,
         *,
         config_cls: type[TrainingConfig] | None = None,
-    ) -> Callable[[type[TrainerT]], type[TrainerT]]:
+    ) -> Callable[[type[TTrainer]], type[TTrainer]]:
         """Register a trainer class.
 
         Args:
@@ -109,7 +146,7 @@ class TrainerRegistry:
             Decorator function.
         """
 
-        def decorator(trainer_cls: type[TrainerT]) -> type[TrainerT]:
+        def decorator(trainer_cls: type[TTrainer]) -> type[TTrainer]:
             cls._trainers[name] = trainer_cls  # type: ignore[assignment]
             if config_cls is not None:
                 cls._configs[name] = config_cls
@@ -204,38 +241,3 @@ class MetricsRegistry:
 
 
 # Convenience decorators
-def register_model(name: str) -> Callable[[type[ModelT]], type[ModelT]]:
-    """Decorator for registering models.
-
-    Example:
-        @register_model("convnext_loc")
-        class ConvNextLocalization(BaseModel):
-            ...
-    """
-    return ModelRegistry.register(name)
-
-
-def register_trainer(
-    name: str,
-    *,
-    config_cls: type[TrainingConfig] | None = None,
-) -> Callable[[type[TrainerT]], type[TrainerT]]:
-    """Decorator for registering trainers.
-
-    Example:
-        @register_trainer("localization", config_cls=LocalizationConfig)
-        class LocalizationTrainer(BaseTrainer):
-            ...
-    """
-    return TrainerRegistry.register(name, config_cls=config_cls)
-
-
-def register_metrics(name: str) -> Callable[[type[T]], type[T]]:
-    """Decorator for registering metrics.
-
-    Example:
-        @register_metrics("localization")
-        class LocalizationMetrics(BaseMetrics):
-            ...
-    """
-    return MetricsRegistry.register(name)

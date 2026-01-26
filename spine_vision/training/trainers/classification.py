@@ -21,12 +21,6 @@ from spine_vision.core.tasks import (
     get_strategy,
     get_task,
 )
-from spine_vision.training.base import (
-    BaseTrainer,
-    TrainingConfig,
-    TrainingResult,
-    _create_worker_init_fn,
-)
 from spine_vision.training.datasets.classification import (
     ClassificationCollator,
     ClassificationDataset,
@@ -36,6 +30,12 @@ from spine_vision.training.datasets.classification import (
 from spine_vision.training.metrics import ClassifierMetrics
 from spine_vision.training.models import Classifier
 from spine_vision.training.registry import register_trainer
+from spine_vision.training.trainers.base import (
+    BaseTrainer,
+    TrainingConfig,
+    TrainingResult,
+    _create_worker_init_fn,
+)
 from spine_vision.visualization import (
     TrainingVisualizer,
     load_classification_original_images,

@@ -15,7 +15,6 @@ from loguru import logger
 from matplotlib.figure import Figure
 from PIL import Image
 
-
 # Standard colors for confusion categories
 CONFUSION_COLORS = {
     "tp": "#2ecc71",  # Green

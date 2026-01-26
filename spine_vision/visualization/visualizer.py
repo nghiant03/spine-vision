@@ -1,6 +1,6 @@
 """Visualizer classes for training and dataset analysis.
 
-Provides a class hierarchy for visualization:
+Provides wrapper classes for visualization functionality:
 - BaseVisualizer: Shared configuration and utility methods
 - TrainingVisualizer: Training progress, predictions, and error analysis
 - DatasetVisualizer: Dataset statistics and distributions
@@ -46,7 +46,6 @@ class BaseVisualizer:
     """Base class for all visualizers.
 
     Provides shared configuration and utility methods for visualization classes.
-    Subclasses should implement domain-specific visualization methods.
     """
 
     output_path: Path | None
@@ -61,8 +60,7 @@ class BaseVisualizer:
 
         Args:
             output_path: Directory for saving visualizations.
-            output_mode: Output format - 'browser' shows interactively,
-                        'html' and 'image' both save as PNG.
+            output_mode: Output format.
         """
         self.output_path = output_path
         self.output_mode = output_mode
@@ -76,13 +74,7 @@ class BaseVisualizer:
         filename: str,
         dpi: int = 150,
     ) -> None:
-        """Save figure using configured output mode.
-
-        Args:
-            fig: Matplotlib figure to save.
-            filename: Output filename (without extension).
-            dpi: Resolution for saved images.
-        """
+        """Save figure using configured output mode."""
         save_figure(fig, self.output_path, filename, self.output_mode, dpi)
 
 
@@ -91,8 +83,6 @@ class TrainingVisualizer(BaseVisualizer):
 
     Generates static plots for training curves, predictions,
     and error analysis. Optionally logs to trackio.
-
-    Inherits from BaseVisualizer for shared output configuration.
     """
 
     use_trackio: bool
@@ -104,14 +94,7 @@ class TrainingVisualizer(BaseVisualizer):
         output_mode: Literal["browser", "html", "image"] = "image",
         use_trackio: bool = False,
     ) -> None:
-        """Initialize visualizer.
-
-        Args:
-            output_path: Directory for saving visualizations.
-            output_mode: Output format ('browser', 'html', 'image').
-                Note: 'html' saves as PNG since seaborn produces static images.
-            use_trackio: If True, also log visualizations to trackio.
-        """
+        """Initialize visualizer."""
         super().__init__(output_path, output_mode)
         self.use_trackio = use_trackio
         self._trackio = None
@@ -134,7 +117,6 @@ class TrainingVisualizer(BaseVisualizer):
         """Log matplotlib figure to trackio as an image."""
         if self._trackio is None:
             return
-        # Convert figure to numpy array using io buffer
         import io
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
@@ -143,6 +125,8 @@ class TrainingVisualizer(BaseVisualizer):
         img = np.array(pil_img.convert("RGB"))
         buf.close()
         self._trackio.log({name: self._trackio.Image(img)})
+
+    # === Localization methods ===
 
     def plot_training_curves(
         self,
@@ -331,7 +315,7 @@ class TrainingVisualizer(BaseVisualizer):
                 table.add_data(*row)
             self._trackio.log({table_name: table})
 
-    # Classification methods
+    # === Classification methods ===
 
     def plot_classification_predictions(
         self,
@@ -524,7 +508,7 @@ class TrainingVisualizer(BaseVisualizer):
         filename: str | None = None,
         log_to_trackio: bool | None = None,
     ) -> Figure:
-        """Plot TP, TN, FP, FN examples for binary or multiclass classification."""
+        """Plot TP, TN, FP, FN examples for classification."""
         fig = plot_confusion_examples(
             images=images,
             predictions=predictions,
@@ -618,7 +602,9 @@ class TrainingVisualizer(BaseVisualizer):
                     for cls, count in class_counts.items():
                         self._trackio.log({
                             f"distribution/{split}/{label}/class_{cls}": count,
-                            f"distribution/{split}/{label}/class_{cls}_pct": count / total * 100 if total > 0 else 0,
+                            f"distribution/{split}/{label}/class_{cls}_pct": (
+                                count / total * 100 if total > 0 else 0
+                            ),
                         })
         return fig
 
@@ -626,46 +612,26 @@ class TrainingVisualizer(BaseVisualizer):
 class DatasetVisualizer(BaseVisualizer):
     """Visualizer for dataset statistics and analysis.
 
-    Provides seaborn/matplotlib-based visualizations for:
-    - Dataset statistics (samples by level, source, grades)
-    - Label distributions
-    - Label co-occurrence analysis
-    - Sample images per class
-
-    Inherits from BaseVisualizer for shared output configuration.
+    Provides seaborn/matplotlib-based visualizations for dataset exploration.
     """
 
-    def plot_dataset_statistics(
-        self, dataset: ClassificationDataset
-    ) -> Figure:
+    def plot_dataset_statistics(self, dataset: ClassificationDataset) -> Figure:
         """Plot overall dataset statistics."""
-        return plot_dataset_statistics(
-            dataset, self.output_path, self.output_mode
-        )
+        return plot_dataset_statistics(dataset, self.output_path, self.output_mode)
 
-    def plot_binary_label_distributions(
-        self, dataset: ClassificationDataset
-    ) -> Figure:
+    def plot_binary_label_distributions(self, dataset: ClassificationDataset) -> Figure:
         """Plot distributions for all binary labels."""
         return plot_binary_label_distributions(
             dataset, self.output_path, self.output_mode
         )
 
-    def plot_label_cooccurrence(
-        self, dataset: ClassificationDataset
-    ) -> Figure:
+    def plot_label_cooccurrence(self, dataset: ClassificationDataset) -> Figure:
         """Plot co-occurrence heatmap between binary labels."""
-        return plot_label_cooccurrence(
-            dataset, self.output_path, self.output_mode
-        )
+        return plot_label_cooccurrence(dataset, self.output_path, self.output_mode)
 
-    def plot_pfirrmann_by_level(
-        self, dataset: ClassificationDataset
-    ) -> Figure:
+    def plot_pfirrmann_by_level(self, dataset: ClassificationDataset) -> Figure:
         """Plot Pfirrmann grade distribution by IVD level."""
-        return plot_pfirrmann_by_level(
-            dataset, self.output_path, self.output_mode
-        )
+        return plot_pfirrmann_by_level(dataset, self.output_path, self.output_mode)
 
     def plot_samples_per_class(
         self,
@@ -691,14 +657,7 @@ class DatasetVisualizer(BaseVisualizer):
         samples_per_class: int = 4,
         display_size: tuple[int, int] = (128, 128),
     ) -> None:
-        """Generate all dataset visualizations.
-
-        Args:
-            dataset: Classification dataset to analyze.
-            data_path: Path to dataset directory containing images.
-            samples_per_class: Number of sample images per class value.
-            display_size: Size (H, W) for displayed images.
-        """
+        """Generate all dataset visualizations."""
         logger.info("Generating dataset statistics...")
         self.plot_dataset_statistics(dataset)
 
@@ -712,9 +671,7 @@ class DatasetVisualizer(BaseVisualizer):
         self.plot_pfirrmann_by_level(dataset)
 
         logger.info("Generating samples per class for each label...")
-        self.plot_samples_per_class(
-            dataset, data_path, samples_per_class, display_size
-        )
+        self.plot_samples_per_class(dataset, data_path, samples_per_class, display_size)
 
         if self.output_path:
             logger.info(f"All visualizations saved to {self.output_path}")

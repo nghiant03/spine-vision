@@ -39,9 +39,9 @@ from spine_vision.core.tasks import (
     get_strategy,
     get_tasks,
 )
-from spine_vision.training.base import BaseModel
 from spine_vision.training.heads import HeadConfig, create_head
 from spine_vision.training.models.backbone import BackboneFactory
+from spine_vision.training.models.base import BaseModel
 from spine_vision.training.registry import register_model
 
 

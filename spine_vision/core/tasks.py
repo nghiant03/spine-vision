@@ -20,16 +20,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import Any, Callable, Literal
 
 import numpy as np
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torchmetrics import Accuracy, F1Score, MetricCollection, Precision, Recall
-
-if TYPE_CHECKING:
-    from torch import Tensor
-
 
 TaskType = Literal["binary", "multiclass", "multilabel", "ordinal", "regression"]
 

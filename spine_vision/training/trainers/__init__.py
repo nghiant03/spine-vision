@@ -3,6 +3,11 @@
 Provides concrete trainer implementations for different tasks.
 """
 
+from spine_vision.training.trainers.base import (
+    BaseTrainer,
+    TrainingConfig,
+    TrainingResult,
+)
 from spine_vision.training.trainers.classification import (
     ClassificationConfig,
     ClassificationTrainer,
@@ -13,6 +18,9 @@ from spine_vision.training.trainers.localization import (
 )
 
 __all__ = [
+    "BaseTrainer",
+    "TrainingConfig",
+    "TrainingResult",
     "LocalizationConfig",
     "LocalizationTrainer",
     "ClassificationConfig",

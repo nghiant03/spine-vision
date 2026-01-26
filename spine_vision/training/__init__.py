@@ -26,12 +26,6 @@ Exports:
     - Visualization: TrainingVisualizer
 """
 
-from spine_vision.training.base import (
-    BaseModel,
-    BaseTrainer,
-    TrainingConfig,
-    TrainingResult,
-)
 from spine_vision.training.datasets import (
     ClassificationDataset,
     LocalizationDataset,
@@ -52,15 +46,11 @@ from spine_vision.training.metrics import (
     LocalizationMetrics,
 )
 from spine_vision.training.models import (
-    AVAILABLE_TASK_NAMES,
     BACKBONES,
     BackboneFactory,
+    BaseModel,
     Classifier,
     CoordinateRegressor,
-    TASK_REGISTRY,
-    TaskConfig,
-    get_task,
-    get_tasks,
     list_backbones,
 )
 from spine_vision.training.registry import (
@@ -72,10 +62,13 @@ from spine_vision.training.registry import (
     register_trainer,
 )
 from spine_vision.training.trainers import (
+    BaseTrainer,
     ClassificationConfig,
     ClassificationTrainer,
     LocalizationConfig,
     LocalizationTrainer,
+    TrainingConfig,
+    TrainingResult,
 )
 from spine_vision.visualization import (
     DatasetVisualizer,
@@ -114,11 +107,6 @@ __all__ = [
     # Models
     "Classifier",
     "CoordinateRegressor",
-    "TaskConfig",
-    "TASK_REGISTRY",
-    "AVAILABLE_TASK_NAMES",
-    "get_task",
-    "get_tasks",
     "BackboneFactory",
     "BACKBONES",
     "list_backbones",
