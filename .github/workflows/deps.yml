@@ -4,9 +4,9 @@ on:
   push:
     branches: [main]
     paths:
+      - "spine_vision/**/*.py"
       - "pyproject.toml"
       - "uv.lock"
-      - "spine_vision/**/*.py"
   workflow_dispatch:  # Allow manual trigger
 
 permissions:
@@ -42,7 +42,7 @@ jobs:
         run: |
           uv run pydeps spine_vision \
             --noshow \
-            -T svg
+            -T svg \
             -o docs/dependencies/internal-deps.svg \
             --only spine_vision \
             --exclude-exact spine_vision.__init__ \
